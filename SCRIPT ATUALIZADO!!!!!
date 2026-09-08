@@ -1,1 +1,2957 @@
+-- ============================================
+-- SCRIPT - MCRM HUB v2.2 (COMPLETO)
+-- AUTO COLETA + AUTO KILL + SOULS + LAVA + BOSS + NPC + FLY + HITBOX + AURA
+-- ============================================
 
+print("🚀 Iniciando MCRM HUB v2.2...")
+
+local player = game.Players.LocalPlayer
+local character = player.Character or player.CharacterAdded:Wait()
+local rootPart = character:WaitForChild("HumanoidRootPart")
+local humanoid = character:WaitForChild("Humanoid")
+
+-- ===== SERVIÇOS =====
+local RunService = game:GetService("RunService")
+local VirtualInputManager = game:GetService("VirtualInputManager")
+local Debris = game:GetService("Debris")
+local Players = game:GetService("Players")
+local Lighting = game:GetService("Lighting")
+local Workspace = game:GetService("Workspace")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+
+-- ============================================
+-- VARIÁVEIS PRINCIPAIS
+-- ============================================
+
+local coletando = false
+local matando = false
+local matandoLava = false
+local matandoBoss = false
+local matandoNPC = false
+local coletandoSouls = false
+local minimizado = false
+local flyAtivo = false
+local hitboxExpandido = false
+local antiAFKAtivo = false
+
+local diamantes = 0
+local kills = 0
+local killsLava = 0
+local killsBoss = 0
+local killsNPC = 0
+local souls = 0
+
+local loopColeta = nil
+local loopKill = nil
+local loopKillLava = nil
+local loopKillBoss = nil
+local loopKillNPC = nil
+local loopSouls = nil
+local loopFly = nil
+local loopHitbox = nil
+local loopAntiAFK = nil
+local loopVelocidade = nil
+
+local alvo = nil
+local alvoLava = nil
+local alvoBoss = nil
+local alvoNPC = nil
+local espada = nil
+local espadaLava = nil
+local raio = 150
+local posicaoSalva = nil
+local afkContador = 0
+local ultimoMovimento = tick()
+
+-- ============================================
+-- VARIÁVEIS DE VELOCIDADE
+-- ============================================
+
+local velocidadeAtual = 16
+local velocidadeMinima = 16
+local velocidadeMaxima = 200
+local incrementoVelocidade = 10
+
+-- ============================================
+-- VARIÁVEIS FLY
+-- ============================================
+
+local flySpeed = 50
+local flyMinSpeed = 10
+local flyMaxSpeed = 200
+local flyIncrement = 10
+local flyBodyVelocity = nil
+local flyBodyGyro = nil
+
+-- ============================================
+-- VARIÁVEIS LAVA
+-- ============================================
+
+local cargaVulcao = 0
+local cargaMaxima = 50
+local tempoCooldownVulcao = 60
+local tempoCooldownExplosao = 12
+local tempoCooldownForma = 17
+local ultimoUsoVulcao = 0
+local ultimoUsoExplosao = 0
+local ultimoUsoForma = 0
+local formaLavaAtiva = false
+local tempoFormaLava = 0
+
+-- ============================================
+-- VARIÁVEIS BOSS
+-- ============================================
+
+local bossAltura = 15
+
+-- ============================================
+-- VARIÁVEIS HITBOX
+-- ============================================
+
+local hitboxRaio = 15
+local auras = {}
+local hitboxPart = nil
+
+-- ============================================
+-- VARIÁVEIS OTIMIZAÇÃO
+-- ============================================
+
+local otimizacaoAtiva = false
+local qualidadeOriginal = {}
+local texturasRemovidas = 0
+
+-- ============================================
+-- CACHE OTIMIZADO
+-- ============================================
+
+local cacheObjetos = {}
+local ultimaAtualizacaoCache = 0
+local tempoAtualizacao = 2
+
+local function atualizarCache()
+    local agora = tick()
+    if agora - ultimaAtualizacaoCache > tempoAtualizacao then
+        cacheObjetos = workspace:GetDescendants()
+        ultimaAtualizacaoCache = agora
+        return true
+    end
+    return false
+end
+
+-- ============================================
+-- FUNÇÕES AUXILIARES
+-- ============================================
+
+function vivo()
+    return character and character.Parent and humanoid and humanoid.Health > 0
+end
+
+function classificarObjeto(nome)
+    nome = nome:lower()
+    if nome:find("diamond") or nome:find("diamante") or nome:find("gem") or nome:find("crystal") then
+        return "diamante"
+    end
+    if (nome:find("soul") or nome:find("alma") or nome:find("espirito") or nome:find("orb") or nome:find("esfera")) then
+        return "soul"
+    end
+    return nil
+end
+
+function acharEspada(nomeEspada)
+    if character then
+        for _, obj in pairs(character:GetChildren()) do
+            if obj:IsA("Tool") then
+                local nome = obj.Name:lower()
+                if nome:find(nomeEspada or "sword") or nome:find("espada") or nome:find("katana") or nome:find("blade") then
+                    return obj
+                end
+            end
+        end
+    end
+    return nil
+end
+
+function acharEspadaLava()
+    if character then
+        for _, obj in pairs(character:GetChildren()) do
+            if obj:IsA("Tool") then
+                local nome = obj.Name:lower()
+                if nome:find("lava") or nome:find("espada de lava") or nome:find("lava sword") then
+                    espadaLava = obj
+                    return espadaLava
+                end
+            end
+        end
+    end
+    return nil
+end
+
+function acharAlvo()
+    if not vivo() then return nil end
+    local pos = rootPart.Position
+    local melhor = nil
+    local menorDistancia = 200
+
+    for _, jogador in pairs(Players:GetPlayers()) do
+        if jogador ~= player then
+            local c = jogador.Character
+            if c and c:FindFirstChild("Humanoid") and c.Humanoid.Health > 0 then
+                local hrp = c:FindFirstChild("HumanoidRootPart")
+                if hrp then
+                    local d = (hrp.Position - pos).Magnitude
+                    if d < menorDistancia then
+                        menorDistancia = d
+                        melhor = jogador
+                    end
+                end
+            end
+        end
+    end
+    return melhor
+end
+
+function acharNPC()
+    if not vivo() then return nil end
+    local pos = rootPart.Position
+    local melhor = nil
+    local menorDistancia = 200
+
+    for _, obj in pairs(workspace:GetDescendants()) do
+        if obj:IsA("Model") then
+            local hum = obj:FindFirstChild("Humanoid")
+            if hum and hum.Health > 0 then
+                local isPlayer = false
+                for _, p in pairs(Players:GetPlayers()) do
+                    if p.Character == obj then
+                        isPlayer = true
+                        break
+                    end
+                end
+                if not isPlayer then
+                    local hrp = obj:FindFirstChild("HumanoidRootPart")
+                    if hrp then
+                        local d = (hrp.Position - pos).Magnitude
+                        if d < menorDistancia then
+                            menorDistancia = d
+                            melhor = obj
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return melhor
+end
+
+function acharBoss()
+    if not vivo() then return nil end
+    local pos = rootPart.Position
+    local melhor = nil
+    local menorDistancia = 300
+
+    for _, obj in pairs(workspace:GetDescendants()) do
+        if obj:IsA("Model") then
+            local hum = obj:FindFirstChild("Humanoid")
+            if hum and hum.Health > 0 then
+                local nome = obj.Name:lower()
+                local isBoss = nome:find("boss") or nome:find("chef") or nome:find("lord") or nome:find("king") or nome:find("dragon")
+                local isPlayer = false
+                for _, p in pairs(Players:GetPlayers()) do
+                    if p.Character == obj then
+                        isPlayer = true
+                        break
+                    end
+                end
+                if not isPlayer and isBoss then
+                    local hrp = obj:FindFirstChild("HumanoidRootPart")
+                    if hrp then
+                        local d = (hrp.Position - pos).Magnitude
+                        if d < menorDistancia then
+                            menorDistancia = d
+                            melhor = obj
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return melhor
+end
+
+function contarSouls()
+    local count = 0
+    local pos = rootPart.Position
+    for _, obj in pairs(cacheObjetos) do
+        if obj:IsA("BasePart") and classificarObjeto(obj.Name) == "soul" then
+            local d = (obj.Position - pos).Magnitude
+            if d < raio + 100 then
+                count = count + 1
+            end
+        end
+    end
+    return count
+end
+
+function usarPoderes()
+    local teclas = {"Z", "X", "C", "V", "B", "F", "G"}
+    for _, tecla in ipairs(teclas) do
+        pcall(function()
+            VirtualInputManager:SendKeyEvent(true, tecla, false, game)
+            wait(0.03)
+            VirtualInputManager:SendKeyEvent(false, tecla, false, game)
+        end)
+    end
+end
+
+function carregarVulcao()
+    if cargaVulcao < cargaMaxima then
+        cargaVulcao = cargaVulcao + 1
+        if cargaVulcao >= cargaMaxima then
+            print("🌋 Vulcão CARREGADO! (50/50)")
+        end
+    end
+    if vulcaoLabel then
+        vulcaoLabel.Text = "🌋 Vulcão: " .. cargaVulcao .. "/" .. cargaMaxima
+        if cargaVulcao >= cargaMaxima then
+            vulcaoLabel.TextColor3 = Color3.fromRGB(255, 200, 0)
+        else
+            vulcaoLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+        end
+    end
+end
+
+-- ============================================
+-- SISTEMA ANTI-AFK
+-- ============================================
+
+local function antiAFKFunc()
+    if not antiAFKAtivo then return end
+    if not vivo() then return end
+    
+    print("🛡️ Anti-AFK executando...")
+    
+    local direcoes = {
+        Vector3.new(2, 0, 0),
+        Vector3.new(-2, 0, 0),
+        Vector3.new(0, 0, 2),
+        Vector3.new(0, 0, -2)
+    }
+    local dir = direcoes[math.random(1, #direcoes)]
+    
+    pcall(function()
+        rootPart.CFrame = rootPart.CFrame + dir
+    end)
+    
+    local teclas = {"W", "A", "S", "D", "Space"}
+    local tecla = teclas[math.random(1, #teclas)]
+    pcall(function()
+        VirtualInputManager:SendKeyEvent(true, tecla, false, game)
+        wait(0.05)
+        VirtualInputManager:SendKeyEvent(false, tecla, false, game)
+    end)
+    
+    pcall(function()
+        humanoid.Jump = true
+        wait(0.1)
+        humanoid.Jump = false
+    end)
+    
+    afkContador = afkContador + 1
+    print("🛡️ Anti-AFK executado! (" .. afkContador .. "x)")
+end
+
+local function alternarAntiAFK()
+    antiAFKAtivo = not antiAFKAtivo
+    
+    if antiAFKAtivo then
+        btnAntiAFK.Text = "🛡️ ANTI-AFK: ON"
+        btnAntiAFK.BackgroundColor3 = Color3.fromRGB(0, 200, 100)
+        statusAntiAFK.Text = "🟢 Ativo"
+        statusAntiAFK.TextColor3 = Color3.fromRGB(0, 255, 100)
+        
+        antiAFKFunc()
+        ultimoMovimento = tick()
+        
+        if loopAntiAFK then loopAntiAFK:Disconnect() end
+        loopAntiAFK = RunService.Heartbeat:Connect(function()
+            if tick() - ultimoMovimento > math.random(45, 90) then
+                antiAFKFunc()
+                ultimoMovimento = tick()
+            end
+        end)
+        print("🛡️ Anti-AFK ATIVADO!")
+    else
+        btnAntiAFK.Text = "🛡️ ANTI-AFK: OFF"
+        btnAntiAFK.BackgroundColor3 = Color3.fromRGB(100, 100, 100)
+        statusAntiAFK.Text = "🔴 Inativo"
+        statusAntiAFK.TextColor3 = Color3.fromRGB(255, 100, 100)
+        
+        if loopAntiAFK then
+            loopAntiAFK:Disconnect()
+            loopAntiAFK = nil
+        end
+        print("🛡️ Anti-AFK DESATIVADO!")
+    end
+end
+
+-- ============================================
+-- SISTEMA DE VELOCIDADE
+-- ============================================
+
+local function definirVelocidade(novaVelocidade)
+    velocidadeAtual = math.clamp(novaVelocidade, velocidadeMinima, velocidadeMaxima)
+    if humanoid then humanoid.WalkSpeed = velocidadeAtual end
+    if velocidadeAtual > 16 then
+        if loopVelocidade then loopVelocidade:Disconnect() end
+        loopVelocidade = RunService.Heartbeat:Connect(function()
+            if humanoid and humanoid.Health > 0 then
+                if humanoid.WalkSpeed ~= velocidadeAtual then
+                    humanoid.WalkSpeed = velocidadeAtual
+                end
+            end
+        end)
+    else
+        if loopVelocidade then loopVelocidade:Disconnect() loopVelocidade = nil end
+        if humanoid then humanoid.WalkSpeed = 16 end
+    end
+end
+
+local function aumentarVelocidade()
+    definirVelocidade(velocidadeAtual + 10)
+    print("🏃 Velocidade: " .. velocidadeAtual)
+end
+
+local function diminuirVelocidade()
+    definirVelocidade(velocidadeAtual - 10)
+    print("🏃 Velocidade: " .. velocidadeAtual)
+end
+
+local function resetarVelocidade()
+    definirVelocidade(16)
+    print("🏃 Velocidade resetada para: 16")
+end
+
+-- ============================================
+-- SISTEMA DE FLY
+-- ============================================
+
+local function iniciarFly()
+    if flyAtivo then return end
+    if not character or not rootPart then return end
+
+    flyAtivo = true
+    print("🕊️ Fly ativado! Velocidade: " .. flySpeed)
+
+    flyBodyVelocity = Instance.new("BodyVelocity")
+    flyBodyVelocity.MaxForce = Vector3.new(1e6, 1e6, 1e6)
+    flyBodyVelocity.Velocity = Vector3.new(0, 0, 0)
+    flyBodyVelocity.Parent = rootPart
+
+    flyBodyGyro = Instance.new("BodyGyro")
+    flyBodyGyro.MaxTorque = Vector3.new(1e6, 1e6, 1e6)
+    flyBodyGyro.CFrame = rootPart.CFrame
+    flyBodyGyro.Parent = rootPart
+
+    if loopFly then loopFly:Disconnect() end
+    loopFly = RunService.Heartbeat:Connect(function()
+        if not flyAtivo or not rootPart then return end
+
+        local moveDirection = Vector3.new(0, 0, 0)
+        local camera = workspace.CurrentCamera
+        
+        if camera then
+            local forward = camera.CFrame.LookVector
+            local right = camera.CFrame.RightVector
+
+            if UserInputService:IsKeyDown(Enum.KeyCode.W) then
+                moveDirection = moveDirection + Vector3.new(forward.X, 0, forward.Z).Unit
+            end
+            if UserInputService:IsKeyDown(Enum.KeyCode.S) then
+                moveDirection = moveDirection - Vector3.new(forward.X, 0, forward.Z).Unit
+            end
+            if UserInputService:IsKeyDown(Enum.KeyCode.A) then
+                moveDirection = moveDirection - Vector3.new(right.X, 0, right.Z).Unit
+            end
+            if UserInputService:IsKeyDown(Enum.KeyCode.D) then
+                moveDirection = moveDirection + Vector3.new(right.X, 0, right.Z).Unit
+            end
+            if UserInputService:IsKeyDown(Enum.KeyCode.Space) then
+                moveDirection = moveDirection + Vector3.new(0, 1, 0)
+            end
+            if UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) then
+                moveDirection = moveDirection + Vector3.new(0, -1, 0)
+            end
+        end
+
+        if moveDirection.Magnitude > 0 then
+            moveDirection = moveDirection.Unit
+            flyBodyVelocity.Velocity = moveDirection * flySpeed
+        else
+            flyBodyVelocity.Velocity = Vector3.new(0, 0, 0)
+        end
+
+        flyBodyGyro.CFrame = CFrame.new(rootPart.Position, rootPart.Position + Vector3.new(0, -1, 0))
+    end)
+end
+
+local function pararFly()
+    if not flyAtivo then return end
+    flyAtivo = false
+    print("🕊️ Fly desativado!")
+
+    if flyBodyVelocity then
+        flyBodyVelocity:Destroy()
+        flyBodyVelocity = nil
+    end
+    if flyBodyGyro then
+        flyBodyGyro:Destroy()
+        flyBodyGyro = nil
+    end
+    if loopFly then
+        loopFly:Disconnect()
+        loopFly = nil
+    end
+end
+
+local function aumentarFlySpeed()
+    flySpeed = math.min(flySpeed + flyIncrement, flyMaxSpeed)
+    if flySpeedLabel then flySpeedLabel.Text = "🕊️ Fly: " .. flySpeed end
+    print("🕊️ Fly velocidade: " .. flySpeed)
+end
+
+local function diminuirFlySpeed()
+    flySpeed = math.max(flySpeed - flyIncrement, flyMinSpeed)
+    if flySpeedLabel then flySpeedLabel.Text = "🕊️ Fly: " .. flySpeed end
+    print("🕊️ Fly velocidade: " .. flySpeed)
+end
+
+local function resetarFlySpeed()
+    flySpeed = 50
+    if flySpeedLabel then flySpeedLabel.Text = "🕊️ Fly: " .. flySpeed end
+    print("🕊️ Fly resetado para: 50")
+end
+
+-- ============================================
+-- SISTEMA DE HITBOX + AURA
+-- ============================================
+
+local function criarAuraInimigo(alvo)
+    if not alvo or not alvo.Character then return end
+    
+    local char = alvo.Character
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
+    
+    if auras[alvo] then return end
+    
+    local aura = Instance.new("Part")
+    aura.Size = Vector3.new(hitboxRaio * 2, 0.3, hitboxRaio * 2)
+    aura.Position = hrp.Position
+    aura.Anchored = true
+    aura.CanCollide = false
+    aura.Transparency = 0.75
+    aura.BrickColor = BrickColor.new("Bright red")
+    aura.Material = Enum.Material.Neon
+    aura.Parent = workspace
+    
+    auras[alvo] = aura
+    
+    local followConnection
+    followConnection = RunService.Heartbeat:Connect(function()
+        if not alvo or not alvo.Character or not alvo.Character:FindFirstChild("HumanoidRootPart") then
+            if aura then aura:Destroy() end
+            auras[alvo] = nil
+            if followConnection then followConnection:Disconnect() end
+            return
+        end
+        local hrp2 = alvo.Character:FindFirstChild("HumanoidRootPart")
+        if hrp2 then
+            aura.Position = hrp2.Position
+            aura.CFrame = CFrame.new(hrp2.Position)
+        end
+    end)
+end
+
+local function removerAuras()
+    for _, aura in pairs(auras) do
+        pcall(function() aura:Destroy() end)
+    end
+    auras = {}
+end
+
+local function criarHitboxJogador()
+    if hitboxPart then
+        hitboxPart:Destroy()
+        hitboxPart = nil
+    end
+    
+    if not character or not rootPart then return end
+    
+    hitboxPart = Instance.new("Part")
+    hitboxPart.Size = Vector3.new(hitboxRaio * 2, 6, hitboxRaio * 2)
+    hitboxPart.Position = rootPart.Position
+    hitboxPart.Anchored = true
+    hitboxPart.CanCollide = false
+    hitboxPart.Transparency = 1
+    hitboxPart.Name = "HitboxExpanded"
+    hitboxPart.Parent = character
+    
+    local followConnection
+    followConnection = RunService.Heartbeat:Connect(function()
+        if not hitboxExpandido or not character or not rootPart then
+            if hitboxPart then hitboxPart:Destroy() end
+            if followConnection then followConnection:Disconnect() end
+            return
+        end
+        if hitboxPart then
+            hitboxPart.Position = rootPart.Position
+        end
+    end)
+end
+
+local function ativarHitbox()
+    if hitboxExpandido then return end
+    hitboxExpandido = true
+    
+    print("🎯 Hitbox expandido ativado! Raio: " .. hitboxRaio)
+    
+    criarHitboxJogador()
+    
+    if loopHitbox then loopHitbox:Disconnect() end
+    loopHitbox = RunService.Heartbeat:Connect(function()
+        if not hitboxExpandido then return end
+        
+        local alvos = {}
+        
+        for _, jogador in pairs(Players:GetPlayers()) do
+            if jogador ~= player then
+                local c = jogador.Character
+                if c and c:FindFirstChild("Humanoid") and c.Humanoid.Health > 0 then
+                    local hrp = c:FindFirstChild("HumanoidRootPart")
+                    if hrp then
+                        local dist = (hrp.Position - rootPart.Position).Magnitude
+                        if dist < 300 then
+                            table.insert(alvos, jogador)
+                        end
+                    end
+                end
+            end
+        end
+        
+        for _, obj in pairs(workspace:GetDescendants()) do
+            if obj:IsA("Model") and obj:FindFirstChild("Humanoid") and obj.Humanoid.Health > 0 then
+                local isPlayer = false
+                for _, p in pairs(Players:GetPlayers()) do
+                    if p.Character == obj then
+                        isPlayer = true
+                        break
+                    end
+                end
+                if not isPlayer then
+                    local hrp = obj:FindFirstChild("HumanoidRootPart")
+                    if hrp then
+                        local dist = (hrp.Position - rootPart.Position).Magnitude
+                        if dist < 300 then
+                            table.insert(alvos, obj)
+                        end
+                    end
+                end
+            end
+        end
+        
+        for _, alvo in pairs(alvos) do
+            if not auras[alvo] then
+                criarAuraInimigo(alvo)
+            end
+        end
+        
+        for alvo, aura in pairs(auras) do
+            local stillAlive = false
+            for _, a in pairs(alvos) do
+                if a == alvo then
+                    stillAlive = true
+                    break
+                end
+            end
+            if not stillAlive then
+                pcall(function() aura:Destroy() end)
+                auras[alvo] = nil
+            end
+        end
+    end)
+    
+    if btnHitbox then
+        btnHitbox.Text = "⏹ PARAR HITBOX"
+        btnHitbox.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+    end
+    if statusHitbox then
+        statusHitbox.Text = "🟢 ON"
+        statusHitbox.TextColor3 = Color3.fromRGB(0, 255, 100)
+    end
+end
+
+local function desativarHitbox()
+    if not hitboxExpandido then return end
+    hitboxExpandido = false
+    
+    if loopHitbox then
+        loopHitbox:Disconnect()
+        loopHitbox = nil
+    end
+    
+    removerAuras()
+    
+    if hitboxPart then
+        hitboxPart:Destroy()
+        hitboxPart = nil
+    end
+    
+    if character then
+        local oldHitbox = character:FindFirstChild("HitboxExpanded")
+        if oldHitbox then
+            oldHitbox:Destroy()
+        end
+    end
+    
+    print("🎯 Hitbox desativado! Voltou ao normal.")
+    
+    if btnHitbox then
+        btnHitbox.Text = "🎯 ATIVAR HITBOX"
+        btnHitbox.BackgroundColor3 = Color3.fromRGB(100, 100, 100)
+    end
+    if statusHitbox then
+        statusHitbox.Text = "🔴 OFF"
+        statusHitbox.TextColor3 = Color3.fromRGB(255, 100, 100)
+    end
+end
+
+local function alternarHitbox()
+    if hitboxExpandido then
+        desativarHitbox()
+    else
+        ativarHitbox()
+    end
+end
+
+local function resetarHitbox()
+    if hitboxExpandido then
+        desativarHitbox()
+    end
+    hitboxRaio = 15
+    if hitboxRaioLabel then
+        hitboxRaioLabel.Text = "📏 Raio: " .. hitboxRaio
+    end
+    if hitboxRaioValor then
+        hitboxRaioValor.Text = hitboxRaio
+    end
+    print("🎯 Hitbox resetado para: " .. hitboxRaio)
+end
+
+local function aumentarHitboxRaio()
+    if hitboxRaio < 50 then
+        hitboxRaio = hitboxRaio + 2
+        if hitboxRaioLabel then
+            hitboxRaioLabel.Text = "📏 Raio: " .. hitboxRaio
+        end
+        if hitboxRaioValor then
+            hitboxRaioValor.Text = hitboxRaio
+        end
+        print("🎯 Hitbox raio: " .. hitboxRaio)
+        if hitboxExpandido then
+            desativarHitbox()
+            ativarHitbox()
+        end
+    end
+end
+
+local function diminuirHitboxRaio()
+    if hitboxRaio > 5 then
+        hitboxRaio = hitboxRaio - 2
+        if hitboxRaioLabel then
+            hitboxRaioLabel.Text = "📏 Raio: " .. hitboxRaio
+        end
+        if hitboxRaioValor then
+            hitboxRaioValor.Text = hitboxRaio
+        end
+        print("🎯 Hitbox raio: " .. hitboxRaio)
+        if hitboxExpandido then
+            desativarHitbox()
+            ativarHitbox()
+        end
+    end
+end
+
+-- ============================================
+-- SISTEMA DE OTIMIZAÇÃO GRÁFICA
+-- ============================================
+
+local function salvarConfiguracoesOriginais()
+    qualidadeOriginal = {
+        brightness = Lighting.Brightness,
+        clockTime = Lighting.ClockTime,
+        fogEnd = Lighting.FogEnd,
+        fogStart = Lighting.FogStart,
+        globalShadows = Lighting.GlobalShadows,
+        ambient = Lighting.Ambient,
+        outdoorAmbient = Lighting.OutdoorAmbient,
+        exposureCompensation = Lighting.ExposureCompensation
+    }
+end
+
+local function otimizarGraficos()
+    if otimizacaoAtiva then
+        if qualidadeOriginal.brightness then
+            Lighting.Brightness = qualidadeOriginal.brightness
+            Lighting.ClockTime = qualidadeOriginal.clockTime
+            Lighting.FogEnd = qualidadeOriginal.fogEnd
+            Lighting.FogStart = qualidadeOriginal.fogStart
+            Lighting.GlobalShadows = qualidadeOriginal.globalShadows
+            Lighting.Ambient = qualidadeOriginal.ambient
+            Lighting.OutdoorAmbient = qualidadeOriginal.outdoorAmbient
+            Lighting.ExposureCompensation = qualidadeOriginal.exposureCompensation
+        end
+        pcall(function()
+            for _, obj in pairs(workspace:GetDescendants()) do
+                if obj:IsA("BasePart") and obj:GetAttribute("MaterialOriginal") then
+                    obj.Material = Enum.Material[obj:GetAttribute("MaterialOriginal")]
+                    obj:SetAttribute("MaterialOriginal", nil)
+                end
+            end
+        end)
+        otimizacaoAtiva = false
+        print("🔄 Gráficos restaurados!")
+    else
+        salvarConfiguracoesOriginais()
+        Lighting.Brightness = 2
+        Lighting.ClockTime = 14
+        Lighting.FogEnd = 100000
+        Lighting.FogStart = 50000
+        Lighting.GlobalShadows = false
+        Lighting.Ambient = Color3.fromRGB(180, 180, 180)
+        Lighting.OutdoorAmbient = Color3.fromRGB(160, 160, 160)
+        Lighting.ExposureCompensation = 0.2
+        pcall(function()
+            for _, obj in pairs(workspace:GetDescendants()) do
+                if obj:IsA("BasePart") then
+                    obj:SetAttribute("MaterialOriginal", obj.Material.Name)
+                    if obj.Material == Enum.Material.Grass or obj.Material == Enum.Material.Fabric or obj.Material == Enum.Material.WoodPlanks or obj.Material == Enum.Material.Cobblestone then
+                        obj.Material = Enum.Material.SmoothPlastic
+                        texturasRemovidas = texturasRemovidas + 1
+                    end
+                    if obj.Reflectance > 0 then obj.Reflectance = 0 end
+                end
+                if obj:IsA("ParticleEmitter") then obj.Enabled = false end
+                if obj:IsA("Texture") or obj:IsA("Decal") then obj.Transparency = 0.5 end
+            end
+        end)
+        otimizacaoAtiva = true
+        print("⚡ Otimização gráfica ativada! Texturas: "..texturasRemovidas)
+    end
+end
+
+local function otimizarExtremo()
+    Lighting.Brightness = 2
+    Lighting.GlobalShadows = false
+    Lighting.FogEnd = 100000
+    Lighting.FogStart = 50000
+    pcall(function()
+        for _, obj in pairs(workspace:GetDescendants()) do
+            if obj:IsA("BasePart") then
+                obj.Material = Enum.Material.SmoothPlastic
+                obj.Reflectance = 0
+                obj.CastShadow = false
+            elseif obj:IsA("ParticleEmitter") then
+                obj.Enabled = false
+            elseif obj:IsA("Texture") or obj:IsA("Decal") then
+                obj:Destroy()
+            elseif obj:IsA("SpecialMesh") then
+                obj.TextureId = ""
+            end
+        end
+    end)
+    print("🔥 Otimização EXTREMA ativada!")
+end
+
+-- ============================================
+-- FUNÇÕES COLETA
+-- ============================================
+
+function coletarDiamantes()
+    if not vivo() then return end
+
+    local pos = rootPart.Position
+    local count = 0
+
+    for _, obj in pairs(cacheObjetos) do
+        if obj:IsA("BasePart") and classificarObjeto(obj.Name) == "diamante" then
+            local dist = (obj.Position - pos).Magnitude
+            if dist < raio then
+                pcall(function()
+                    obj.CFrame = rootPart.CFrame + Vector3.new(0, 1.5, 0)
+                    Debris:AddItem(obj, 0.1)
+                    count = count + 1
+                end)
+            end
+        end
+    end
+
+    if count > 0 then
+        diamantes = diamantes + count
+        contador.Text = "💎"..diamantes.." ⚔️"..kills.." 👻"..souls
+    end
+end
+
+function alternarColeta()
+    if not vivo() then
+        statusColeta.Text = "⚠️ Morto!"
+        statusColeta.TextColor3 = Color3.fromRGB(255, 200, 0)
+        wait(1)
+        statusColeta.Text = "🔴 OFF"
+        statusColeta.TextColor3 = Color3.fromRGB(255, 100, 100)
+        return
+    end
+
+    coletando = not coletando
+
+    if coletando then
+        btnColeta.Text = "⏹ PARAR"
+        btnColeta.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+        statusColeta.Text = "🟢 ON"
+        statusColeta.TextColor3 = Color3.fromRGB(0, 255, 100)
+
+        if loopColeta then loopColeta:Disconnect() end
+        loopColeta = RunService.Heartbeat:Connect(function()
+            if coletando and vivo() then
+                if atualizarCache() then
+                    coletarDiamantes()
+                end
+            end
+        end)
+    else
+        btnColeta.Text = "💎 ATIVAR"
+        btnColeta.BackgroundColor3 = Color3.fromRGB(0, 150, 255)
+        statusColeta.Text = "🔴 OFF"
+        statusColeta.TextColor3 = Color3.fromRGB(255, 100, 100)
+
+        if loopColeta then
+            loopColeta:Disconnect()
+            loopColeta = nil
+        end
+    end
+end
+
+-- ============================================
+-- FUNÇÕES SOULS
+-- ============================================
+
+function coletarSouls()
+    if not vivo() then return end
+
+    local pos = rootPart.Position
+    local count = 0
+
+    for _, obj in pairs(cacheObjetos) do
+        if obj:IsA("BasePart") and classificarObjeto(obj.Name) == "soul" then
+            local dist = (obj.Position - pos).Magnitude
+            if dist < raio then
+                pcall(function()
+                    obj.CFrame = rootPart.CFrame + Vector3.new(0, 1.5, 0)
+                    Debris:AddItem(obj, 0.1)
+                    count = count + 1
+                end)
+            end
+        end
+    end
+
+    if count > 0 then
+        souls = souls + count
+        contador.Text = "💎"..diamantes.." ⚔️"..kills.." 👻"..souls
+        contSouls.Text = "👻 " .. souls
+    end
+
+    local total = contarSouls()
+    if total > 0 then
+        orbesDetect.Text = "🟢 Souls: "..total
+        orbesDetect.TextColor3 = Color3.fromRGB(0, 255, 100)
+    else
+        orbesDetect.Text = "🔴 Souls: 0"
+        orbesDetect.TextColor3 = Color3.fromRGB(255, 100, 100)
+    end
+end
+
+function alternarSouls()
+    if not vivo() then
+        statusSouls.Text = "⚠️ Morto!"
+        statusSouls.TextColor3 = Color3.fromRGB(255, 200, 0)
+        wait(1)
+        statusSouls.Text = "🔴 OFF"
+        statusSouls.TextColor3 = Color3.fromRGB(255, 100, 100)
+        return
+    end
+
+    coletandoSouls = not coletandoSouls
+
+    if coletandoSouls then
+        btnSouls.Text = "⏹ PARAR"
+        btnSouls.BackgroundColor3 = Color3.fromRGB(200, 150, 0)
+        statusSouls.Text = "🟢 Coletando Souls..."
+        statusSouls.TextColor3 = Color3.fromRGB(0, 255, 100)
+
+        if loopSouls then loopSouls:Disconnect() end
+        loopSouls = RunService.Heartbeat:Connect(function()
+            if coletandoSouls and vivo() then
+                if atualizarCache() then
+                    coletarSouls()
+                end
+            end
+        end)
+    else
+        btnSouls.Text = "👻 ATIVAR SOULS"
+        btnSouls.BackgroundColor3 = Color3.fromRGB(255, 215, 0)
+        statusSouls.Text = "🔴 OFF"
+        statusSouls.TextColor3 = Color3.fromRGB(255, 100, 100)
+
+        if loopSouls then
+            loopSouls:Disconnect()
+            loopSouls = nil
+        end
+    end
+end
+
+-- ============================================
+-- FUNÇÕES KILL NORMAL
+-- ============================================
+
+function loopKillFunc()
+    if not matando then return end
+
+    if not vivo() then
+        matando = false
+        btnKill.Text = "⚔️ ATIVAR"
+        btnKill.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+        statusKill.Text = "💀 MORTO"
+        statusKill.TextColor3 = Color3.fromRGB(255, 100, 100)
+        if loopKill then
+            loopKill:Disconnect()
+            loopKill = nil
+        end
+        print("💀 Auto Kill desligado (personagem morreu)!")
+        return
+    end
+
+    if not espada or not espada.Parent then
+        espada = acharEspada("sword")
+        if not espada then
+            statusKill.Text = "⚠️ Sem espada!"
+            statusKill.TextColor3 = Color3.fromRGB(255, 200, 0)
+            wait(2)
+            return
+        end
+    end
+
+    if not alvo or not alvo.Character or alvo.Character.Humanoid.Health <= 0 then
+        alvo = acharAlvo()
+        if alvo then
+            statusKill.Text = "🎯 " .. alvo.Name
+            statusKill.TextColor3 = Color3.fromRGB(255, 200, 0)
+        else
+            statusKill.Text = "🔍 Procurando..."
+            statusKill.TextColor3 = Color3.fromRGB(255, 200, 0)
+            wait(1)
+            return
+        end
+    end
+
+    if alvo and alvo.Character and alvo.Character.Humanoid.Health > 0 then
+        local hrp = alvo.Character:FindFirstChild("HumanoidRootPart")
+        if hrp then
+            local posAlvo = hrp.Position
+            local posJogador = rootPart.Position
+            local dist = (posAlvo - posJogador).Magnitude
+
+            local cf = hrp.CFrame
+            local costas = cf.LookVector * -1
+            local posCostas = posAlvo + (costas * 2.5)
+
+            if dist > 20 then
+                local dir = (posAlvo - posJogador).Unit
+                rootPart.CFrame = rootPart.CFrame + (dir * 10)
+                statusKill.Text = "🏃 Correndo..."
+                statusKill.TextColor3 = Color3.fromRGB(255, 200, 0)
+                return
+            end
+
+            if dist > 4 then
+                local dirCostas = (posCostas - posJogador).Unit
+                rootPart.CFrame = rootPart.CFrame + (dirCostas * 5)
+                statusKill.Text = "🎯 Flanqueando..."
+                statusKill.TextColor3 = Color3.fromRGB(255, 200, 0)
+                return
+            end
+
+            local olhar = CFrame.lookAt(rootPart.Position, posAlvo)
+            rootPart.CFrame = CFrame.new(rootPart.Position, olhar.LookVector + rootPart.Position)
+
+            pcall(function()
+                espada:Activate()
+                wait(0.05)
+                espada:Activate()
+                usarPoderes()
+            end)
+
+            kills = kills + 1
+            contador.Text = "💎"..diamantes.." ⚔️"..kills.." 👻"..souls
+            statusKill.Text = "⚔️ ATACANDO!"
+            statusKill.TextColor3 = Color3.fromRGB(255, 0, 0)
+        end
+    end
+end
+
+function alternarKill()
+    if not vivo() then
+        statusKill.Text = "⚠️ Morto!"
+        statusKill.TextColor3 = Color3.fromRGB(255, 200, 0)
+        wait(1)
+        statusKill.Text = "🔴 OFF"
+        statusKill.TextColor3 = Color3.fromRGB(255, 100, 100)
+        return
+    end
+
+    matando = not matando
+
+    if matando then
+        espada = acharEspada("sword")
+        if not espada then
+            statusKill.Text = "⚠️ Sem espada!"
+            statusKill.TextColor3 = Color3.fromRGB(255, 200, 0)
+            matando = false
+            btnKill.Text = "⚔️ ATIVAR"
+            btnKill.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+            wait(2)
+            statusKill.Text = "🔴 OFF"
+            statusKill.TextColor3 = Color3.fromRGB(255, 100, 100)
+            return
+        end
+
+        btnKill.Text = "⏹ PARAR"
+        btnKill.BackgroundColor3 = Color3.fromRGB(50, 200, 50)
+        statusKill.Text = "🟢 ON"
+        statusKill.TextColor3 = Color3.fromRGB(0, 255, 100)
+
+        if loopKill then loopKill:Disconnect() end
+        loopKill = RunService.Heartbeat:Connect(function()
+            if matando then
+                loopKillFunc()
+                wait(0.05)
+            end
+        end)
+    else
+        btnKill.Text = "⚔️ ATIVAR"
+        btnKill.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+        statusKill.Text = "🔴 OFF"
+        statusKill.TextColor3 = Color3.fromRGB(255, 100, 100)
+        alvo = nil
+
+        if loopKill then
+            loopKill:Disconnect()
+            loopKill = nil
+        end
+    end
+end
+
+-- ============================================
+-- FUNÇÕES KILL LAVA
+-- ============================================
+
+function loopKillLavaFunc()
+    if not matandoLava then return end
+
+    if not vivo() then
+        matandoLava = false
+        btnKillLava.Text = "🌋 ATIVAR LAVA"
+        btnKillLava.BackgroundColor3 = Color3.fromRGB(255, 100, 0)
+        statusKillLava.Text = "💀 MORTO"
+        statusKillLava.TextColor3 = Color3.fromRGB(255, 100, 100)
+        if loopKillLava then
+            loopKillLava:Disconnect()
+            loopKillLava = nil
+        end
+        print("💀 Auto Kill Lava desligado (personagem morreu)!")
+        return
+    end
+
+    if not espadaLava or not espadaLava.Parent then
+        acharEspadaLava()
+        if not espadaLava then
+            statusKillLava.Text = "⚠️ Sem Espada Lava!"
+            statusKillLava.TextColor3 = Color3.fromRGB(255, 200, 0)
+            wait(2)
+            return
+        end
+    end
+
+    if not alvoLava or not alvoLava.Character or alvoLava.Character.Humanoid.Health <= 0 then
+        alvoLava = acharAlvo()
+        if alvoLava then
+            statusKillLava.Text = "🎯 " .. alvoLava.Name
+            statusKillLava.TextColor3 = Color3.fromRGB(255, 200, 0)
+        else
+            statusKillLava.Text = "🔍 Procurando..."
+            statusKillLava.TextColor3 = Color3.fromRGB(255, 200, 0)
+            wait(1)
+            return
+        end
+    end
+
+    if alvoLava and alvoLava.Character and alvoLava.Character.Humanoid.Health > 0 then
+        local hrp = alvoLava.Character:FindFirstChild("HumanoidRootPart")
+        if hrp then
+            local posAlvo = hrp.Position
+            local posJogador = rootPart.Position
+            local dist = (posAlvo - posJogador).Magnitude
+
+            local cf = hrp.CFrame
+            local costas = cf.LookVector * -1
+            local posCostas = posAlvo + (costas * 2.5)
+
+            if dist > 20 then
+                local dir = (posAlvo - posJogador).Unit
+                rootPart.CFrame = rootPart.CFrame + (dir * 10)
+                statusKillLava.Text = "🏃 Correndo (Lava)..."
+                statusKillLava.TextColor3 = Color3.fromRGB(255, 200, 0)
+                return
+            end
+
+            if dist > 4 then
+                local dirCostas = (posCostas - posJogador).Unit
+                rootPart.CFrame = rootPart.CFrame + (dirCostas * 5)
+                statusKillLava.Text = "🎯 Flanqueando (Lava)..."
+                statusKillLava.TextColor3 = Color3.fromRGB(255, 200, 0)
+                return
+            end
+
+            local olhar = CFrame.lookAt(rootPart.Position, posAlvo)
+            rootPart.CFrame = CFrame.new(rootPart.Position, olhar.LookVector + rootPart.Position)
+
+            pcall(function()
+                espadaLava:Activate()
+                wait(0.05)
+                espadaLava:Activate()
+                carregarVulcao()
+                
+                local agora = tick()
+                
+                if cargaVulcao >= cargaMaxima and agora - ultimoUsoVulcao > tempoCooldownVulcao then
+                    pcall(function()
+                        VirtualInputManager:SendKeyEvent(true, "Q", false, game)
+                        wait(0.1)
+                        VirtualInputManager:SendKeyEvent(false, "Q", false, game)
+                        cargaVulcao = 0
+                        ultimoUsoVulcao = agora
+                        print("🌋 Vulcão (Q) ativado!")
+                    end)
+                end
+                
+                if agora - ultimoUsoExplosao > tempoCooldownExplosao then
+                    pcall(function()
+                        VirtualInputManager:SendKeyEvent(true, "2", false, game)
+                        wait(0.1)
+                        VirtualInputManager:SendKeyEvent(false, "2", false, game)
+                        ultimoUsoExplosao = agora
+                        print("💥 Explosão de Lava (2) ativada!")
+                    end)
+                end
+                
+                if agora - ultimoUsoForma > tempoCooldownForma then
+                    pcall(function()
+                        VirtualInputManager:SendKeyEvent(true, "3", false, game)
+                        wait(0.1)
+                        VirtualInputManager:SendKeyEvent(false, "3", false, game)
+                        ultimoUsoForma = agora
+                        formaLavaAtiva = true
+                        tempoFormaLava = 5
+                        print("🔥 Forma de Lava (3) ativada!")
+                    end)
+                end
+            end)
+
+            killsLava = killsLava + 1
+            killsLavaLabel.Text = "🌋 Kills Lava: " .. killsLava
+            statusKillLava.Text = "🌋 ATACANDO!"
+            statusKillLava.TextColor3 = Color3.fromRGB(255, 150, 0)
+
+            local agora = tick()
+            local vulcaoStatus = (cargaVulcao >= cargaMaxima and agora - ultimoUsoVulcao > tempoCooldownVulcao) and "✅ PRONTO" or "⏳ " .. cargaVulcao .. "/" .. cargaMaxima
+            local explosaoStatus = (agora - ultimoUsoExplosao > tempoCooldownExplosao) and "✅ PRONTO" or "⏳ " .. math.floor(tempoCooldownExplosao - (agora - ultimoUsoExplosao)) .. "s"
+            local formaStatus = (agora - ultimoUsoForma > tempoCooldownForma) and "✅ PRONTO" or "⏳ " .. math.floor(tempoCooldownForma - (agora - ultimoUsoForma)) .. "s"
+            habilidadesLabel.Text = "💥 Explosão: " .. explosaoStatus .. "  |  🔥 Forma: " .. formaStatus
+        end
+    end
+end
+
+function alternarKillLava()
+    if not vivo() then
+        statusKillLava.Text = "⚠️ Morto!"
+        statusKillLava.TextColor3 = Color3.fromRGB(255, 200, 0)
+        wait(1)
+        statusKillLava.Text = "🔴 OFF"
+        statusKillLava.TextColor3 = Color3.fromRGB(255, 100, 100)
+        return
+    end
+
+    matandoLava = not matandoLava
+
+    if matandoLava then
+        acharEspadaLava()
+        if not espadaLava then
+            statusKillLava.Text = "⚠️ Sem Espada Lava!"
+            statusKillLava.TextColor3 = Color3.fromRGB(255, 200, 0)
+            matandoLava = false
+            btnKillLava.Text = "🌋 ATIVAR LAVA"
+            btnKillLava.BackgroundColor3 = Color3.fromRGB(255, 100, 0)
+            wait(2)
+            statusKillLava.Text = "🔴 OFF"
+            statusKillLava.TextColor3 = Color3.fromRGB(255, 100, 100)
+            return
+        end
+
+        btnKillLava.Text = "⏹ PARAR LAVA"
+        btnKillLava.BackgroundColor3 = Color3.fromRGB(200, 100, 0)
+        statusKillLava.Text = "🟢 ON"
+        statusKillLava.TextColor3 = Color3.fromRGB(255, 200, 0)
+
+        ultimoUsoVulcao = 0
+        ultimoUsoExplosao = 0
+        ultimoUsoForma = 0
+        cargaVulcao = 0
+
+        if loopKillLava then loopKillLava:Disconnect() end
+        loopKillLava = RunService.Heartbeat:Connect(function()
+            if matandoLava then
+                loopKillLavaFunc()
+                wait(0.05)
+            end
+        end)
+    else
+        btnKillLava.Text = "🌋 ATIVAR LAVA"
+        btnKillLava.BackgroundColor3 = Color3.fromRGB(255, 100, 0)
+        statusKillLava.Text = "🔴 OFF"
+        statusKillLava.TextColor3 = Color3.fromRGB(255, 100, 100)
+        alvoLava = nil
+
+        if loopKillLava then
+            loopKillLava:Disconnect()
+            loopKillLava = nil
+        end
+    end
+end
+
+-- ============================================
+-- FUNÇÕES BOSS KILL
+-- ============================================
+
+function loopKillBossFunc()
+    if not matandoBoss then return end
+
+    if not vivo() then
+        matandoBoss = false
+        btnKillBoss.Text = "👑 ATIVAR BOSS"
+        btnKillBoss.BackgroundColor3 = Color3.fromRGB(255, 215, 0)
+        statusKillBoss.Text = "💀 MORTO"
+        statusKillBoss.TextColor3 = Color3.fromRGB(255, 100, 100)
+        bossStatusLabel.Text = "🎯 Morto"
+        bossStatusLabel.TextColor3 = Color3.fromRGB(200, 50, 50)
+        if loopKillBoss then
+            loopKillBoss:Disconnect()
+            loopKillBoss = nil
+        end
+        print("💀 Boss Kill desligado (personagem morreu)!")
+        return
+    end
+
+    if not espada or not espada.Parent then
+        espada = acharEspada("sword")
+        if not espada then
+            statusKillBoss.Text = "⚠️ Sem espada!"
+            statusKillBoss.TextColor3 = Color3.fromRGB(255, 200, 0)
+            wait(2)
+            return
+        end
+    end
+
+    if not alvoBoss then
+        alvoBoss = acharBoss()
+        if alvoBoss then
+            local nome = alvoBoss.Name or "Boss"
+            bossStatusLabel.Text = "👑 " .. nome
+            bossStatusLabel.TextColor3 = Color3.fromRGB(255, 215, 0)
+            statusKillBoss.Text = "🎯 " .. nome
+            statusKillBoss.TextColor3 = Color3.fromRGB(255, 200, 0)
+        else
+            bossStatusLabel.Text = "🎯 Nenhum Boss"
+            bossStatusLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+            statusKillBoss.Text = "🔍 Procurando Boss..."
+            statusKillBoss.TextColor3 = Color3.fromRGB(255, 200, 0)
+            wait(2)
+            return
+        end
+    end
+
+    if alvoBoss and alvoBoss:FindFirstChild("Humanoid") and alvoBoss.Humanoid.Health > 0 then
+        local hrp = alvoBoss:FindFirstChild("HumanoidRootPart")
+        if hrp then
+            local posAlvo = hrp.Position
+            local posJogador = rootPart.Position
+            local dist = (posAlvo - posJogador).Magnitude
+
+            local posAcima = posAlvo + Vector3.new(0, bossAltura, 0)
+
+            if dist > 20 then
+                local dir = (posAlvo - posJogador).Unit
+                rootPart.CFrame = rootPart.CFrame + (dir * 10)
+                statusKillBoss.Text = "🏃 Correndo para Boss..."
+                statusKillBoss.TextColor3 = Color3.fromRGB(255, 200, 0)
+                return
+            end
+
+            if dist > 5 or math.abs(posJogador.Y - posAcima.Y) > 2 then
+                local dir = (posAcima - posJogador)
+                rootPart.CFrame = rootPart.CFrame + (dir.Unit * 5)
+                statusKillBoss.Text = "⬆️ Subindo para o Boss..."
+                statusKillBoss.TextColor3 = Color3.fromRGB(255, 200, 0)
+                return
+            end
+
+            if dist < 5 then
+                rootPart.CFrame = CFrame.new(posAcima + Vector3.new(0, 0.5, 0))
+            end
+
+            local olhar = CFrame.lookAt(rootPart.Position, posAlvo + Vector3.new(0, -2, 0))
+            rootPart.CFrame = CFrame.new(rootPart.Position, olhar.LookVector + rootPart.Position)
+
+            pcall(function()
+                espada:Activate()
+                wait(0.05)
+                espada:Activate()
+                usarPoderes()
+            end)
+
+            killsBoss = killsBoss + 1
+            killsBossLabel.Text = "👑 Kills Boss: " .. killsBoss
+            statusKillBoss.Text = "👑 ATACANDO BOSS!"
+            statusKillBoss.TextColor3 = Color3.fromRGB(255, 215, 0)
+            bossStatusLabel.Text = "👑 " .. (alvoBoss.Name or "Boss") .. " 💀"
+            bossStatusLabel.TextColor3 = Color3.fromRGB(255, 215, 0)
+        end
+    else
+        alvoBoss = nil
+        bossStatusLabel.Text = "🎯 Boss Morto"
+        bossStatusLabel.TextColor3 = Color3.fromRGB(200, 50, 50)
+        statusKillBoss.Text = "💀 Boss Morto!"
+        statusKillBoss.TextColor3 = Color3.fromRGB(255, 100, 100)
+    end
+end
+
+function alternarKillBoss()
+    if not vivo() then
+        statusKillBoss.Text = "⚠️ Morto!"
+        statusKillBoss.TextColor3 = Color3.fromRGB(255, 200, 0)
+        wait(1)
+        statusKillBoss.Text = "🔴 OFF"
+        statusKillBoss.TextColor3 = Color3.fromRGB(255, 100, 100)
+        return
+    end
+
+    matandoBoss = not matandoBoss
+
+    if matandoBoss then
+        espada = acharEspada("sword")
+        if not espada then
+            statusKillBoss.Text = "⚠️ Sem espada!"
+            statusKillBoss.TextColor3 = Color3.fromRGB(255, 200, 0)
+            matandoBoss = false
+            btnKillBoss.Text = "👑 ATIVAR BOSS"
+            btnKillBoss.BackgroundColor3 = Color3.fromRGB(255, 215, 0)
+            wait(2)
+            statusKillBoss.Text = "🔴 OFF"
+            statusKillBoss.TextColor3 = Color3.fromRGB(255, 100, 100)
+            return
+        end
+
+        btnKillBoss.Text = "⏹ PARAR BOSS"
+        btnKillBoss.BackgroundColor3 = Color3.fromRGB(200, 150, 0)
+        statusKillBoss.Text = "🟢 ON"
+        statusKillBoss.TextColor3 = Color3.fromRGB(255, 215, 0)
+        bossStatusLabel.Text = "🔍 Procurando Boss..."
+        bossStatusLabel.TextColor3 = Color3.fromRGB(255, 200, 0)
+
+        alvoBoss = nil
+
+        if loopKillBoss then loopKillBoss:Disconnect() end
+        loopKillBoss = RunService.Heartbeat:Connect(function()
+            if matandoBoss then
+                loopKillBossFunc()
+                wait(0.05)
+            end
+        end)
+    else
+        btnKillBoss.Text = "👑 ATIVAR BOSS"
+        btnKillBoss.BackgroundColor3 = Color3.fromRGB(255, 215, 0)
+        statusKillBoss.Text = "🔴 OFF"
+        statusKillBoss.TextColor3 = Color3.fromRGB(255, 100, 100)
+        bossStatusLabel.Text = "🎯 Nenhum Boss"
+        bossStatusLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+        alvoBoss = nil
+
+        if loopKillBoss then
+            loopKillBoss:Disconnect()
+            loopKillBoss = nil
+        end
+    end
+end
+
+-- ============================================
+-- FUNÇÕES NPC KILL
+-- ============================================
+
+function loopKillNPCFunc()
+    if not matandoNPC then return end
+
+    if not vivo() then
+        matandoNPC = false
+        btnKillNPC.Text = "🧟 ATIVAR NPC"
+        btnKillNPC.BackgroundColor3 = Color3.fromRGB(100, 200, 100)
+        statusKillNPC.Text = "💀 MORTO"
+        statusKillNPC.TextColor3 = Color3.fromRGB(255, 100, 100)
+        if loopKillNPC then
+            loopKillNPC:Disconnect()
+            loopKillNPC = nil
+        end
+        print("💀 NPC Kill desligado (personagem morreu)!")
+        return
+    end
+
+    if not espada or not espada.Parent then
+        espada = acharEspada("sword")
+        if not espada then
+            statusKillNPC.Text = "⚠️ Sem espada!"
+            statusKillNPC.TextColor3 = Color3.fromRGB(255, 200, 0)
+            wait(2)
+            return
+        end
+    end
+
+    if not alvoNPC then
+        alvoNPC = acharNPC()
+        if alvoNPC then
+            local nome = alvoNPC.Name or "NPC"
+            statusKillNPC.Text = "🎯 " .. nome
+            statusKillNPC.TextColor3 = Color3.fromRGB(255, 200, 0)
+        else
+            statusKillNPC.Text = "🔍 Procurando NPC..."
+            statusKillNPC.TextColor3 = Color3.fromRGB(255, 200, 0)
+            wait(1)
+            return
+        end
+    end
+
+    if alvoNPC and alvoNPC:FindFirstChild("Humanoid") and alvoNPC.Humanoid.Health > 0 then
+        local hrp = alvoNPC:FindFirstChild("HumanoidRootPart")
+        if hrp then
+            local posAlvo = hrp.Position
+            local posJogador = rootPart.Position
+            local dist = (posAlvo - posJogador).Magnitude
+
+            local cf = hrp.CFrame
+            local costas = cf.LookVector * -1
+            local posCostas = posAlvo + (costas * 2.5)
+
+            if dist > 20 then
+                local dir = (posAlvo - posJogador).Unit
+                rootPart.CFrame = rootPart.CFrame + (dir * 10)
+                statusKillNPC.Text = "🏃 Correndo..."
+                statusKillNPC.TextColor3 = Color3.fromRGB(255, 200, 0)
+                return
+            end
+
+            if dist > 4 then
+                local dirCostas = (posCostas - posJogador).Unit
+                rootPart.CFrame = rootPart.CFrame + (dirCostas * 5)
+                statusKillNPC.Text = "🎯 Flanqueando..."
+                statusKillNPC.TextColor3 = Color3.fromRGB(255, 200, 0)
+                return
+            end
+
+            local olhar = CFrame.lookAt(rootPart.Position, posAlvo)
+            rootPart.CFrame = CFrame.new(rootPart.Position, olhar.LookVector + rootPart.Position)
+
+            pcall(function()
+                espada:Activate()
+                wait(0.05)
+                espada:Activate()
+                usarPoderes()
+            end)
+
+            killsNPC = killsNPC + 1
+            killsNPCLabel.Text = "🧟 Kills NPC: " .. killsNPC
+            statusKillNPC.Text = "🧟 ATACANDO!"
+            statusKillNPC.TextColor3 = Color3.fromRGB(100, 255, 100)
+        end
+    else
+        alvoNPC = nil
+        statusKillNPC.Text = "💀 NPC Morto!"
+        statusKillNPC.TextColor3 = Color3.fromRGB(255, 100, 100)
+    end
+end
+
+function alternarKillNPC()
+    if not vivo() then
+        statusKillNPC.Text = "⚠️ Morto!"
+        statusKillNPC.TextColor3 = Color3.fromRGB(255, 200, 0)
+        wait(1)
+        statusKillNPC.Text = "🔴 OFF"
+        statusKillNPC.TextColor3 = Color3.fromRGB(255, 100, 100)
+        return
+    end
+
+    matandoNPC = not matandoNPC
+
+    if matandoNPC then
+        espada = acharEspada("sword")
+        if not espada then
+            statusKillNPC.Text = "⚠️ Sem espada!"
+            statusKillNPC.TextColor3 = Color3.fromRGB(255, 200, 0)
+            matandoNPC = false
+            btnKillNPC.Text = "🧟 ATIVAR NPC"
+            btnKillNPC.BackgroundColor3 = Color3.fromRGB(100, 200, 100)
+            wait(2)
+            statusKillNPC.Text = "🔴 OFF"
+            statusKillNPC.TextColor3 = Color3.fromRGB(255, 100, 100)
+            return
+        end
+
+        btnKillNPC.Text = "⏹ PARAR NPC"
+        btnKillNPC.BackgroundColor3 = Color3.fromRGB(200, 100, 100)
+        statusKillNPC.Text = "🟢 ON"
+        statusKillNPC.TextColor3 = Color3.fromRGB(100, 255, 100)
+        alvoNPC = nil
+
+        if loopKillNPC then loopKillNPC:Disconnect() end
+        loopKillNPC = RunService.Heartbeat:Connect(function()
+            if matandoNPC then
+                loopKillNPCFunc()
+                wait(0.05)
+            end
+        end)
+    else
+        btnKillNPC.Text = "🧟 ATIVAR NPC"
+        btnKillNPC.BackgroundColor3 = Color3.fromRGB(100, 200, 100)
+        statusKillNPC.Text = "🔴 OFF"
+        statusKillNPC.TextColor3 = Color3.fromRGB(255, 100, 100)
+        alvoNPC = nil
+
+        if loopKillNPC then
+            loopKillNPC:Disconnect()
+            loopKillNPC = nil
+        end
+    end
+end
+
+-- ============================================
+-- INTERFACE COMPLETA
+-- ============================================
+
+local gui = Instance.new("ScreenGui")
+gui.Name = "MCRMHub"
+gui.Parent = player.PlayerGui
+gui.ResetOnSpawn = false
+
+local frame = Instance.new("Frame")
+frame.Size = UDim2.new(0, 300, 0, 620)
+frame.Position = UDim2.new(0.5, -150, 0.5, -310)
+frame.BackgroundColor3 = Color3.fromRGB(20, 20, 35)
+frame.BackgroundTransparency = 0.1
+frame.BorderSizePixel = 0
+frame.Parent = gui
+frame.Draggable = false
+frame.Active = false
+
+local corner = Instance.new("UICorner")
+corner.CornerRadius = UDim.new(0, 10)
+corner.Parent = frame
+
+-- CABEÇALHO
+local header = Instance.new("Frame")
+header.Size = UDim2.new(1, 0, 0, 35)
+header.Position = UDim2.new(0, 0, 0, 0)
+header.BackgroundColor3 = Color3.fromRGB(30, 30, 60)
+header.BackgroundTransparency = 0.1
+header.BorderSizePixel = 0
+header.Parent = frame
+header.ZIndex = 10
+
+local headerCorner = Instance.new("UICorner")
+headerCorner.CornerRadius = UDim.new(0, 10)
+headerCorner.Parent = header
+
+local titulo = Instance.new("TextLabel")
+titulo.Size = UDim2.new(1, -70, 1, 0)
+titulo.Position = UDim2.new(0, 8, 0, 0)
+titulo.BackgroundTransparency = 1
+titulo.Text = "⚡ MCRM v2.2 ⚡"
+titulo.TextColor3 = Color3.fromRGB(0, 200, 255)
+titulo.TextSize = 13
+titulo.Font = Enum.Font.GothamBold
+titulo.TextXAlignment = Enum.TextXAlignment.Left
+titulo.Parent = header
+
+local statusVivo = Instance.new("TextLabel")
+statusVivo.Size = UDim2.new(0, 30, 1, 0)
+statusVivo.Position = UDim2.new(1, -60, 0, 0)
+statusVivo.BackgroundTransparency = 1
+statusVivo.Text = "❤️"
+statusVivo.TextColor3 = Color3.fromRGB(0, 255, 100)
+statusVivo.TextSize = 13
+statusVivo.Font = Enum.Font.GothamBold
+statusVivo.TextXAlignment = Enum.TextXAlignment.Right
+statusVivo.Parent = header
+
+local minBtn = Instance.new("TextButton")
+minBtn.Size = UDim2.new(0, 22, 0, 22)
+minBtn.Position = UDim2.new(1, -50, 0, 6)
+minBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 120)
+minBtn.BackgroundTransparency = 0.2
+minBtn.Text = "─"
+minBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+minBtn.TextSize = 14
+minBtn.Font = Enum.Font.GothamBold
+minBtn.BorderSizePixel = 0
+minBtn.Parent = header
+
+local minCorner = Instance.new("UICorner")
+minCorner.CornerRadius = UDim.new(0, 5)
+minCorner.Parent = minBtn
+
+local closeBtn = Instance.new("TextButton")
+closeBtn.Size = UDim2.new(0, 22, 0, 22)
+closeBtn.Position = UDim2.new(1, -26, 0, 6)
+closeBtn.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+closeBtn.BackgroundTransparency = 0.2
+closeBtn.Text = "✕"
+closeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+closeBtn.TextSize = 12
+closeBtn.Font = Enum.Font.GothamBold
+closeBtn.BorderSizePixel = 0
+closeBtn.Parent = header
+
+local closeCorner = Instance.new("UICorner")
+closeCorner.CornerRadius = UDim.new(0, 5)
+closeCorner.Parent = closeBtn
+
+-- SCROLL
+local scrollFrame = Instance.new("ScrollingFrame")
+scrollFrame.Size = UDim2.new(1, -8, 1, -40)
+scrollFrame.Position = UDim2.new(0, 4, 0, 40)
+scrollFrame.BackgroundTransparency = 1
+scrollFrame.BorderSizePixel = 0
+scrollFrame.Parent = frame
+scrollFrame.ScrollBarThickness = 5
+scrollFrame.ScrollBarImageColor3 = Color3.fromRGB(0, 200, 255)
+scrollFrame.ScrollingDirection = Enum.ScrollingDirection.Y
+scrollFrame.VerticalScrollBarInset = Enum.ScrollBarInset.Always
+scrollFrame.CanvasSize = UDim2.new(0, 0, 0, 850)
+scrollFrame.AutomaticCanvasSize = Enum.AutomaticSize.Y
+scrollFrame.ScrollBarImageTransparency = 0.3
+
+local content = Instance.new("Frame")
+content.Size = UDim2.new(1, 0, 0, 850)
+content.BackgroundTransparency = 1
+content.Parent = scrollFrame
+
+-- ============================================
+-- SEÇÃO: FLY
+-- ============================================
+
+local secaoFly = Instance.new("Frame")
+secaoFly.Size = UDim2.new(1, 0, 0, 80)
+secaoFly.Position = UDim2.new(0, 0, 0, 0)
+secaoFly.BackgroundColor3 = Color3.fromRGB(30, 60, 90)
+secaoFly.BackgroundTransparency = 0.2
+secaoFly.BorderSizePixel = 0
+secaoFly.Parent = content
+
+local secaoFlyCorner = Instance.new("UICorner")
+secaoFlyCorner.CornerRadius = UDim.new(0, 7)
+secaoFlyCorner.Parent = secaoFly
+
+local tituloFly = Instance.new("TextLabel")
+tituloFly.Size = UDim2.new(1, 0, 0, 15)
+tituloFly.BackgroundTransparency = 1
+tituloFly.Text = "🕊️ CONTROLE DE FLY"
+tituloFly.TextColor3 = Color3.fromRGB(100, 200, 255)
+tituloFly.TextSize = 10
+tituloFly.Font = Enum.Font.GothamBold
+tituloFly.TextXAlignment = Enum.TextXAlignment.Left
+tituloFly.Parent = secaoFly
+
+local btnFly = Instance.new("TextButton")
+btnFly.Size = UDim2.new(0, 120, 0, 24)
+btnFly.Position = UDim2.new(0, 0, 0, 18)
+btnFly.BackgroundColor3 = Color3.fromRGB(100, 100, 100)
+btnFly.BackgroundTransparency = 0.15
+btnFly.Text = "🕊️ FLY: OFF"
+btnFly.TextColor3 = Color3.fromRGB(255, 255, 255)
+btnFly.TextSize = 9
+btnFly.Font = Enum.Font.GothamBold
+btnFly.BorderSizePixel = 0
+btnFly.Parent = secaoFly
+
+local statusFly = Instance.new("TextLabel")
+statusFly.Size = UDim2.new(0, 80, 0, 14)
+statusFly.Position = UDim2.new(0, 130, 0, 23)
+statusFly.BackgroundTransparency = 1
+statusFly.Text = "🔴 Inativo"
+statusFly.TextColor3 = Color3.fromRGB(255, 100, 100)
+statusFly.TextSize = 9
+statusFly.Font = Enum.Font.Gotham
+statusFly.TextXAlignment = Enum.TextXAlignment.Left
+statusFly.Parent = secaoFly
+
+local flySpeedLabel = Instance.new("TextLabel")
+flySpeedLabel.Size = UDim2.new(1, 0, 0, 14)
+flySpeedLabel.Position = UDim2.new(0, 0, 0, 46)
+flySpeedLabel.BackgroundTransparency = 1
+flySpeedLabel.Text = "🕊️ Fly: 50"
+flySpeedLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+flySpeedLabel.TextSize = 9
+flySpeedLabel.Font = Enum.Font.Gotham
+flySpeedLabel.TextXAlignment = Enum.TextXAlignment.Center
+flySpeedLabel.Parent = secaoFly
+
+local btnFlyMenos = Instance.new("TextButton")
+btnFlyMenos.Size = UDim2.new(0, 40, 0, 20)
+btnFlyMenos.Position = UDim2.new(0, 40, 0, 64)
+btnFlyMenos.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+btnFlyMenos.BackgroundTransparency = 0.2
+btnFlyMenos.Text = "−"
+btnFlyMenos.TextColor3 = Color3.fromRGB(255, 255, 255)
+btnFlyMenos.TextSize = 14
+btnFlyMenos.Font = Enum.Font.GothamBold
+btnFlyMenos.BorderSizePixel = 0
+btnFlyMenos.Parent = secaoFly
+
+local btnFlyReset = Instance.new("TextButton")
+btnFlyReset.Size = UDim2.new(0, 60, 0, 20)
+btnFlyReset.Position = UDim2.new(0.5, -30, 0, 64)
+btnFlyReset.BackgroundColor3 = Color3.fromRGB(100, 100, 100)
+btnFlyReset.BackgroundTransparency = 0.2
+btnFlyReset.Text = "RESET"
+btnFlyReset.TextColor3 = Color3.fromRGB(255, 255, 255)
+btnFlyReset.TextSize = 10
+btnFlyReset.Font = Enum.Font.GothamBold
+btnFlyReset.BorderSizePixel = 0
+btnFlyReset.Parent = secaoFly
+
+local btnFlyMais = Instance.new("TextButton")
+btnFlyMais.Size = UDim2.new(0, 40, 0, 20)
+btnFlyMais.Position = UDim2.new(1, -80, 0, 64)
+btnFlyMais.BackgroundColor3 = Color3.fromRGB(0, 200, 100)
+btnFlyMais.BackgroundTransparency = 0.2
+btnFlyMais.Text = "+"
+btnFlyMais.TextColor3 = Color3.fromRGB(255, 255, 255)
+btnFlyMais.TextSize = 14
+btnFlyMais.Font = Enum.Font.GothamBold
+btnFlyMais.BorderSizePixel = 0
+btnFlyMais.Parent = secaoFly
+
+-- ============================================
+-- SEÇÃO: ANTI-AFK
+-- ============================================
+
+local secaoAntiAFK = Instance.new("Frame")
+secaoAntiAFK.Size = UDim2.new(1, 0, 0, 50)
+secaoAntiAFK.Position = UDim2.new(0, 0, 0, 85)
+secaoAntiAFK.BackgroundColor3 = Color3.fromRGB(30, 60, 30)
+secaoAntiAFK.BackgroundTransparency = 0.2
+secaoAntiAFK.BorderSizePixel = 0
+secaoAntiAFK.Parent = content
+
+local secaoAntiAFKCorner = Instance.new("UICorner")
+secaoAntiAFKCorner.CornerRadius = UDim.new(0, 7)
+secaoAntiAFKCorner.Parent = secaoAntiAFK
+
+local tituloAntiAFK = Instance.new("TextLabel")
+tituloAntiAFK.Size = UDim2.new(1, 0, 0, 15)
+tituloAntiAFK.BackgroundTransparency = 1
+tituloAntiAFK.Text = "🛡️ ANTI-AFK"
+tituloAntiAFK.TextColor3 = Color3.fromRGB(0, 255, 100)
+tituloAntiAFK.TextSize = 10
+tituloAntiAFK.Font = Enum.Font.GothamBold
+tituloAntiAFK.TextXAlignment = Enum.TextXAlignment.Left
+tituloAntiAFK.Parent = secaoAntiAFK
+
+local btnAntiAFK = Instance.new("TextButton")
+btnAntiAFK.Size = UDim2.new(0, 120, 0, 24)
+btnAntiAFK.Position = UDim2.new(0, 0, 0, 18)
+btnAntiAFK.BackgroundColor3 = Color3.fromRGB(100, 100, 100)
+btnAntiAFK.BackgroundTransparency = 0.15
+btnAntiAFK.Text = "🛡️ ANTI-AFK: OFF"
+btnAntiAFK.TextColor3 = Color3.fromRGB(255, 255, 255)
+btnAntiAFK.TextSize = 9
+btnAntiAFK.Font = Enum.Font.GothamBold
+btnAntiAFK.BorderSizePixel = 0
+btnAntiAFK.Parent = secaoAntiAFK
+
+local statusAntiAFK = Instance.new("TextLabel")
+statusAntiAFK.Size = UDim2.new(0, 80, 0, 14)
+statusAntiAFK.Position = UDim2.new(0, 130, 0, 23)
+statusAntiAFK.BackgroundTransparency = 1
+statusAntiAFK.Text = "🔴 Inativo"
+statusAntiAFK.TextColor3 = Color3.fromRGB(255, 100, 100)
+statusAntiAFK.TextSize = 9
+statusAntiAFK.Font = Enum.Font.Gotham
+statusAntiAFK.TextXAlignment = Enum.TextXAlignment.Left
+statusAntiAFK.Parent = secaoAntiAFK
+
+-- ============================================
+-- SEÇÃO: VELOCIDADE
+-- ============================================
+
+local secaoVelocidade = Instance.new("Frame")
+secaoVelocidade.Size = UDim2.new(1, 0, 0, 55)
+secaoVelocidade.Position = UDim2.new(0, 0, 0, 140)
+secaoVelocidade.BackgroundColor3 = Color3.fromRGB(60, 30, 60)
+secaoVelocidade.BackgroundTransparency = 0.2
+secaoVelocidade.BorderSizePixel = 0
+secaoVelocidade.Parent = content
+
+local secaoVelocidadeCorner = Instance.new("UICorner")
+secaoVelocidadeCorner.CornerRadius = UDim.new(0, 7)
+secaoVelocidadeCorner.Parent = secaoVelocidade
+
+local tituloVelocidade = Instance.new("TextLabel")
+tituloVelocidade.Size = UDim2.new(1, 0, 0, 15)
+tituloVelocidade.BackgroundTransparency = 1
+tituloVelocidade.Text = "🏃 VELOCIDADE"
+tituloVelocidade.TextColor3 = Color3.fromRGB(200, 100, 255)
+tituloVelocidade.TextSize = 10
+tituloVelocidade.Font = Enum.Font.GothamBold
+tituloVelocidade.TextXAlignment = Enum.TextXAlignment.Left
+tituloVelocidade.Parent = secaoVelocidade
+
+local btnVelocidadeMenos = Instance.new("TextButton")
+btnVelocidadeMenos.Size = UDim2.new(0, 70, 0, 26)
+btnVelocidadeMenos.Position = UDim2.new(0, 15, 0, 20)
+btnVelocidadeMenos.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+btnVelocidadeMenos.BackgroundTransparency = 0.2
+btnVelocidadeMenos.Text = "− MENOS"
+btnVelocidadeMenos.TextColor3 = Color3.fromRGB(255, 255, 255)
+btnVelocidadeMenos.TextSize = 11
+btnVelocidadeMenos.Font = Enum.Font.GothamBold
+btnVelocidadeMenos.BorderSizePixel = 0
+btnVelocidadeMenos.Parent = secaoVelocidade
+
+local btnVelocidadeMais = Instance.new("TextButton")
+btnVelocidadeMais.Size = UDim2.new(0, 70, 0, 26)
+btnVelocidadeMais.Position = UDim2.new(0, 100, 0, 20)
+btnVelocidadeMais.BackgroundColor3 = Color3.fromRGB(0, 200, 100)
+btnVelocidadeMais.BackgroundTransparency = 0.2
+btnVelocidadeMais.Text = "+ MAIS"
+btnVelocidadeMais.TextColor3 = Color3.fromRGB(255, 255, 255)
+btnVelocidadeMais.TextSize = 11
+btnVelocidadeMais.Font = Enum.Font.GothamBold
+btnVelocidadeMais.BorderSizePixel = 0
+btnVelocidadeMais.Parent = secaoVelocidade
+
+local btnResetVelocidade = Instance.new("TextButton")
+btnResetVelocidade.Size = UDim2.new(0, 70, 0, 26)
+btnResetVelocidade.Position = UDim2.new(0, 185, 0, 20)
+btnResetVelocidade.BackgroundColor3 = Color3.fromRGB(100, 100, 100)
+btnResetVelocidade.BackgroundTransparency = 0.2
+btnResetVelocidade.Text = "🔄 RESET"
+btnResetVelocidade.TextColor3 = Color3.fromRGB(255, 255, 255)
+btnResetVelocidade.TextSize = 11
+btnResetVelocidade.Font = Enum.Font.GothamBold
+btnResetVelocidade.BorderSizePixel = 0
+btnResetVelocidade.Parent = secaoVelocidade
+
+-- ============================================
+-- SEÇÃO: OTIMIZAÇÃO
+-- ============================================
+
+local secao0 = Instance.new("Frame")
+secao0.Size = UDim2.new(1, 0, 0, 80)
+secao0.Position = UDim2.new(0, 0, 0, 200)
+secao0.BackgroundColor3 = Color3.fromRGB(30, 30, 60)
+secao0.BackgroundTransparency = 0.2
+secao0.BorderSizePixel = 0
+secao0.Parent = content
+
+local secao0Corner = Instance.new("UICorner")
+secao0Corner.CornerRadius = UDim.new(0, 7)
+secao0Corner.Parent = secao0
+
+local titulo0 = Instance.new("TextLabel")
+titulo0.Size = UDim2.new(1, 0, 0, 15)
+titulo0.BackgroundTransparency = 1
+titulo0.Text = "🎨 OTIMIZAÇÃO"
+titulo0.TextColor3 = Color3.fromRGB(255, 165, 0)
+titulo0.TextSize = 10
+titulo0.Font = Enum.Font.GothamBold
+titulo0.TextXAlignment = Enum.TextXAlignment.Left
+titulo0.Parent = secao0
+
+local btnOtimizar = Instance.new("TextButton")
+btnOtimizar.Size = UDim2.new(0, 120, 0, 24)
+btnOtimizar.Position = UDim2.new(0, 0, 0, 18)
+btnOtimizar.BackgroundColor3 = Color3.fromRGB(255, 165, 0)
+btnOtimizar.BackgroundTransparency = 0.15
+btnOtimizar.Text = "🎨 OTIMIZAR"
+btnOtimizar.TextColor3 = Color3.fromRGB(255, 255, 255)
+btnOtimizar.TextSize = 9
+btnOtimizar.Font = Enum.Font.GothamBold
+btnOtimizar.BorderSizePixel = 0
+btnOtimizar.Parent = secao0
+
+local btnExtremo = Instance.new("TextButton")
+btnExtremo.Size = UDim2.new(0, 120, 0, 24)
+btnExtremo.Position = UDim2.new(0, 130, 0, 18)
+btnExtremo.BackgroundColor3 = Color3.fromRGB(255, 50, 0)
+btnExtremo.BackgroundTransparency = 0.15
+btnExtremo.Text = "🔥 EXTREMO"
+btnExtremo.TextColor3 = Color3.fromRGB(255, 255, 255)
+btnExtremo.TextSize = 9
+btnExtremo.Font = Enum.Font.GothamBold
+btnExtremo.BorderSizePixel = 0
+btnExtremo.Parent = secao0
+
+local statusOtimizacao = Instance.new("TextLabel")
+statusOtimizacao.Size = UDim2.new(1, 0, 0, 14)
+statusOtimizacao.Position = UDim2.new(0, 0, 0, 46)
+statusOtimizacao.BackgroundTransparency = 1
+statusOtimizacao.Text = "🟢 Gráficos Normais"
+statusOtimizacao.TextColor3 = Color3.fromRGB(0, 255, 100)
+statusOtimizacao.TextSize = 9
+statusOtimizacao.Font = Enum.Font.Gotham
+statusOtimizacao.TextXAlignment = Enum.TextXAlignment.Center
+statusOtimizacao.Parent = secao0
+
+-- ============================================
+-- SEÇÃO: COLETA
+-- ============================================
+
+local secao1 = Instance.new("Frame")
+secao1.Size = UDim2.new(1, 0, 0, 70)
+secao1.Position = UDim2.new(0, 0, 0, 285)
+secao1.BackgroundColor3 = Color3.fromRGB(25, 25, 50)
+secao1.BackgroundTransparency = 0.3
+secao1.BorderSizePixel = 0
+secao1.Parent = content
+
+local secao1Corner = Instance.new("UICorner")
+secao1Corner.CornerRadius = UDim.new(0, 7)
+secao1Corner.Parent = secao1
+
+local titulo1 = Instance.new("TextLabel")
+titulo1.Size = UDim2.new(1, 0, 0, 15)
+titulo1.BackgroundTransparency = 1
+titulo1.Text = "💎 COLETA"
+titulo1.TextColor3 = Color3.fromRGB(0, 200, 255)
+titulo1.TextSize = 10
+titulo1.Font = Enum.Font.GothamBold
+titulo1.TextXAlignment = Enum.TextXAlignment.Left
+titulo1.Parent = secao1
+
+local btnColeta = Instance.new("TextButton")
+btnColeta.Size = UDim2.new(0, 110, 0, 24)
+btnColeta.Position = UDim2.new(0, 0, 0, 18)
+btnColeta.BackgroundColor3 = Color3.fromRGB(0, 150, 255)
+btnColeta.BackgroundTransparency = 0.15
+btnColeta.Text = "💎 ATIVAR"
+btnColeta.TextColor3 = Color3.fromRGB(255, 255, 255)
+btnColeta.TextSize = 9
+btnColeta.Font = Enum.Font.GothamBold
+btnColeta.BorderSizePixel = 0
+btnColeta.Parent = secao1
+
+local statusColeta = Instance.new("TextLabel")
+statusColeta.Size = UDim2.new(0, 70, 0, 14)
+statusColeta.Position = UDim2.new(0, 120, 0, 23)
+statusColeta.BackgroundTransparency = 1
+statusColeta.Text = "🔴 OFF"
+statusColeta.TextColor3 = Color3.fromRGB(255, 100, 100)
+statusColeta.TextSize = 9
+statusColeta.Font = Enum.Font.Gotham
+statusColeta.TextXAlignment = Enum.TextXAlignment.Left
+statusColeta.Parent = secao1
+
+-- RAIO
+local raioFrame = Instance.new("Frame")
+raioFrame.Size = UDim2.new(1, 0, 0, 18)
+raioFrame.Position = UDim2.new(0, 0, 0, 46)
+raioFrame.BackgroundTransparency = 1
+raioFrame.Parent = secao1
+
+local raioLab = Instance.new("TextLabel")
+raioLab.Size = UDim2.new(0.35, 0, 1, 0)
+raioLab.BackgroundTransparency = 1
+raioLab.Text = "📏 " .. raio
+raioLab.TextColor3 = Color3.fromRGB(200, 200, 200)
+raioLab.TextSize = 9
+raioLab.Font = Enum.Font.Gotham
+raioLab.TextXAlignment = Enum.TextXAlignment.Left
+raioLab.Parent = raioFrame
+
+local raioMenos = Instance.new("TextButton")
+raioMenos.Size = UDim2.new(0, 16, 0, 12)
+raioMenos.Position = UDim2.new(1, -52, 0.5, -6)
+raioMenos.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+raioMenos.BackgroundTransparency = 0.2
+raioMenos.Text = "−"
+raioMenos.TextColor3 = Color3.fromRGB(255, 255, 255)
+raioMenos.TextSize = 9
+raioMenos.Font = Enum.Font.GothamBold
+raioMenos.BorderSizePixel = 0
+raioMenos.Parent = raioFrame
+
+local raioValor = Instance.new("TextLabel")
+raioValor.Size = UDim2.new(0, 20, 0, 12)
+raioValor.Position = UDim2.new(1, -36, 0, 0)
+raioValor.BackgroundTransparency = 1
+raioValor.Text = raio
+raioValor.TextColor3 = Color3.fromRGB(255, 255, 255)
+raioValor.TextSize = 9
+raioValor.Font = Enum.Font.GothamBold
+raioValor.TextXAlignment = Enum.TextXAlignment.Center
+raioValor.Parent = raioFrame
+
+local raioMais = Instance.new("TextButton")
+raioMais.Size = UDim2.new(0, 16, 0, 12)
+raioMais.Position = UDim2.new(1, -16, 0.5, -6)
+raioMais.BackgroundColor3 = Color3.fromRGB(0, 200, 100)
+raioMais.BackgroundTransparency = 0.2
+raioMais.Text = "+"
+raioMais.TextColor3 = Color3.fromRGB(255, 255, 255)
+raioMais.TextSize = 9
+raioMais.Font = Enum.Font.GothamBold
+raioMais.BorderSizePixel = 0
+raioMais.Parent = raioFrame
+
+-- ============================================
+-- SEÇÃO: AUTO KILL
+-- ============================================
+
+local secao2 = Instance.new("Frame")
+secao2.Size = UDim2.new(1, 0, 0, 70)
+secao2.Position = UDim2.new(0, 0, 0, 360)
+secao2.BackgroundColor3 = Color3.fromRGB(25, 25, 50)
+secao2.BackgroundTransparency = 0.3
+secao2.BorderSizePixel = 0
+secao2.Parent = content
+
+local secao2Corner = Instance.new("UICorner")
+secao2Corner.CornerRadius = UDim.new(0, 7)
+secao2Corner.Parent = secao2
+
+local titulo2 = Instance.new("TextLabel")
+titulo2.Size = UDim2.new(1, 0, 0, 15)
+titulo2.BackgroundTransparency = 1
+titulo2.Text = "⚔️ AUTO KILL"
+titulo2.TextColor3 = Color3.fromRGB(255, 100, 100)
+titulo2.TextSize = 10
+titulo2.Font = Enum.Font.GothamBold
+titulo2.TextXAlignment = Enum.TextXAlignment.Left
+titulo2.Parent = secao2
+
+local btnKill = Instance.new("TextButton")
+btnKill.Size = UDim2.new(0, 110, 0, 24)
+btnKill.Position = UDim2.new(0, 0, 0, 18)
+btnKill.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+btnKill.BackgroundTransparency = 0.15
+btnKill.Text = "⚔️ ATIVAR"
+btnKill.TextColor3 = Color3.fromRGB(255, 255, 255)
+btnKill.TextSize = 9
+btnKill.Font = Enum.Font.GothamBold
+btnKill.BorderSizePixel = 0
+btnKill.Parent = secao2
+
+local statusKill = Instance.new("TextLabel")
+statusKill.Size = UDim2.new(0, 70, 0, 14)
+statusKill.Position = UDim2.new(0, 120, 0, 23)
+statusKill.BackgroundTransparency = 1
+statusKill.Text = "🔴 OFF"
+statusKill.TextColor3 = Color3.fromRGB(255, 100, 100)
+statusKill.TextSize = 9
+statusKill.Font = Enum.Font.Gotham
+statusKill.TextXAlignment = Enum.TextXAlignment.Left
+statusKill.Parent = secao2
+
+local modoAgressivo = false
+local btnModo = Instance.new("TextButton")
+btnModo.Size = UDim2.new(0, 110, 0, 18)
+btnModo.Position = UDim2.new(0, 0, 0, 46)
+btnModo.BackgroundColor3 = Color3.fromRGB(100, 100, 100)
+btnModo.BackgroundTransparency = 0.2
+btnModo.Text = "🎯 MODO: NORMAL"
+btnModo.TextColor3 = Color3.fromRGB(255, 255, 255)
+btnModo.TextSize = 8
+btnModo.Font = Enum.Font.Gotham
+btnModo.BorderSizePixel = 0
+btnModo.Parent = secao2
+
+-- ============================================
+-- SEÇÃO: KILL LAVA
+-- ============================================
+
+local secaoLava = Instance.new("Frame")
+secaoLava.Size = UDim2.new(1, 0, 0, 110)
+secaoLava.Position = UDim2.new(0, 0, 0, 435)
+secaoLava.BackgroundColor3 = Color3.fromRGB(60, 30, 30)
+secaoLava.BackgroundTransparency = 0.2
+secaoLava.BorderSizePixel = 0
+secaoLava.Parent = content
+
+local secaoLavaCorner = Instance.new("UICorner")
+secaoLavaCorner.CornerRadius = UDim.new(0, 7)
+secaoLavaCorner.Parent = secaoLava
+
+local tituloLava = Instance.new("TextLabel")
+tituloLava.Size = UDim2.new(1, 0, 0, 15)
+tituloLava.BackgroundTransparency = 1
+tituloLava.Text = "🌋 AUTO KILL LAVA"
+tituloLava.TextColor3 = Color3.fromRGB(255, 150, 0)
+tituloLava.TextSize = 10
+tituloLava.Font = Enum.Font.GothamBold
+tituloLava.TextXAlignment = Enum.TextXAlignment.Left
+tituloLava.Parent = secaoLava
+
+local btnKillLava = Instance.new("TextButton")
+btnKillLava.Size = UDim2.new(0, 110, 0, 24)
+btnKillLava.Position = UDim2.new(0, 0, 0, 18)
+btnKillLava.BackgroundColor3 = Color3.fromRGB(255, 100, 0)
+btnKillLava.BackgroundTransparency = 0.15
+btnKillLava.Text = "🌋 ATIVAR LAVA"
+btnKillLava.TextColor3 = Color3.fromRGB(255, 255, 255)
+btnKillLava.TextSize = 9
+btnKillLava.Font = Enum.Font.GothamBold
+btnKillLava.BorderSizePixel = 0
+btnKillLava.Parent = secaoLava
+
+local statusKillLava = Instance.new("TextLabel")
+statusKillLava.Size = UDim2.new(0, 70, 0, 14)
+statusKillLava.Position = UDim2.new(0, 120, 0, 23)
+statusKillLava.BackgroundTransparency = 1
+statusKillLava.Text = "🔴 OFF"
+statusKillLava.TextColor3 = Color3.fromRGB(255, 100, 100)
+statusKillLava.TextSize = 9
+statusKillLava.Font = Enum.Font.Gotham
+statusKillLava.TextXAlignment = Enum.TextXAlignment.Left
+statusKillLava.Parent = secaoLava
+
+local vulcaoLabel = Instance.new("TextLabel")
+vulcaoLabel.Size = UDim2.new(1, 0, 0, 14)
+vulcaoLabel.Position = UDim2.new(0, 0, 0, 46)
+vulcaoLabel.BackgroundTransparency = 1
+vulcaoLabel.Text = "🌋 Vulcão: 0/50"
+vulcaoLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+vulcaoLabel.TextSize = 9
+vulcaoLabel.Font = Enum.Font.Gotham
+vulcaoLabel.TextXAlignment = Enum.TextXAlignment.Center
+vulcaoLabel.Parent = secaoLava
+
+local habilidadesLabel = Instance.new("TextLabel")
+habilidadesLabel.Size = UDim2.new(1, 0, 0, 14)
+habilidadesLabel.Position = UDim2.new(0, 0, 0, 62)
+habilidadesLabel.BackgroundTransparency = 1
+habilidadesLabel.Text = "💥 Explosão: Pronto  |  🔥 Forma: Pronto"
+habilidadesLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+habilidadesLabel.TextSize = 8
+habilidadesLabel.Font = Enum.Font.Gotham
+habilidadesLabel.TextXAlignment = Enum.TextXAlignment.Center
+habilidadesLabel.Parent = secaoLava
+
+local killsLavaLabel = Instance.new("TextLabel")
+killsLavaLabel.Size = UDim2.new(1, 0, 0, 14)
+killsLavaLabel.Position = UDim2.new(0, 0, 0, 78)
+killsLavaLabel.BackgroundTransparency = 1
+killsLavaLabel.Text = "🌋 Kills Lava: 0"
+killsLavaLabel.TextColor3 = Color3.fromRGB(255, 150, 0)
+killsLavaLabel.TextSize = 9
+killsLavaLabel.Font = Enum.Font.GothamBold
+killsLavaLabel.TextXAlignment = Enum.TextXAlignment.Center
+killsLavaLabel.Parent = secaoLava
+
+-- ============================================
+-- SEÇÃO: BOSS KILL
+-- ============================================
+
+local secaoBoss = Instance.new("Frame")
+secaoBoss.Size = UDim2.new(1, 0, 0, 80)
+secaoBoss.Position = UDim2.new(0, 0, 0, 550)
+secaoBoss.BackgroundColor3 = Color3.fromRGB(30, 30, 60)
+secaoBoss.BackgroundTransparency = 0.2
+secaoBoss.BorderSizePixel = 0
+secaoBoss.Parent = content
+
+local secaoBossCorner = Instance.new("UICorner")
+secaoBossCorner.CornerRadius = UDim.new(0, 7)
+secaoBossCorner.Parent = secaoBoss
+
+local tituloBoss = Instance.new("TextLabel")
+tituloBoss.Size = UDim2.new(1, 0, 0, 15)
+tituloBoss.BackgroundTransparency = 1
+tituloBoss.Text = "👑 BOSS KILL"
+tituloBoss.TextColor3 = Color3.fromRGB(255, 215, 0)
+tituloBoss.TextSize = 10
+tituloBoss.Font = Enum.Font.GothamBold
+tituloBoss.TextXAlignment = Enum.TextXAlignment.Left
+tituloBoss.Parent = secaoBoss
+
+local btnKillBoss = Instance.new("TextButton")
+btnKillBoss.Size = UDim2.new(0, 110, 0, 24)
+btnKillBoss.Position = UDim2.new(0, 0, 0, 18)
+btnKillBoss.BackgroundColor3 = Color3.fromRGB(255, 215, 0)
+btnKillBoss.BackgroundTransparency = 0.15
+btnKillBoss.Text = "👑 ATIVAR BOSS"
+btnKillBoss.TextColor3 = Color3.fromRGB(255, 255, 255)
+btnKillBoss.TextSize = 9
+btnKillBoss.Font = Enum.Font.GothamBold
+btnKillBoss.BorderSizePixel = 0
+btnKillBoss.Parent = secaoBoss
+
+local statusKillBoss = Instance.new("TextLabel")
+statusKillBoss.Size = UDim2.new(0, 70, 0, 14)
+statusKillBoss.Position = UDim2.new(0, 120, 0, 23)
+statusKillBoss.BackgroundTransparency = 1
+statusKillBoss.Text = "🔴 OFF"
+statusKillBoss.TextColor3 = Color3.fromRGB(255, 100, 100)
+statusKillBoss.TextSize = 9
+statusKillBoss.Font = Enum.Font.Gotham
+statusKillBoss.TextXAlignment = Enum.TextXAlignment.Left
+statusKillBoss.Parent = secaoBoss
+
+local bossStatusLabel = Instance.new("TextLabel")
+bossStatusLabel.Size = UDim2.new(1, 0, 0, 14)
+bossStatusLabel.Position = UDim2.new(0, 0, 0, 46)
+bossStatusLabel.BackgroundTransparency = 1
+bossStatusLabel.Text = "🎯 Nenhum Boss"
+bossStatusLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+bossStatusLabel.TextSize = 8
+bossStatusLabel.Font = Enum.Font.Gotham
+bossStatusLabel.TextXAlignment = Enum.TextXAlignment.Center
+bossStatusLabel.Parent = secaoBoss
+
+local killsBossLabel = Instance.new("TextLabel")
+killsBossLabel.Size = UDim2.new(1, 0, 0, 14)
+killsBossLabel.Position = UDim2.new(0, 0, 0, 62)
+killsBossLabel.BackgroundTransparency = 1
+killsBossLabel.Text = "👑 Kills Boss: 0"
+killsBossLabel.TextColor3 = Color3.fromRGB(255, 215, 0)
+killsBossLabel.TextSize = 9
+killsBossLabel.Font = Enum.Font.GothamBold
+killsBossLabel.TextXAlignment = Enum.TextXAlignment.Center
+killsBossLabel.Parent = secaoBoss
+
+-- ============================================
+-- SEÇÃO: NPC KILL
+-- ============================================
+
+local secaoNPC = Instance.new("Frame")
+secaoNPC.Size = UDim2.new(1, 0, 0, 70)
+secaoNPC.Position = UDim2.new(0, 0, 0, 635)
+secaoNPC.BackgroundColor3 = Color3.fromRGB(30, 60, 60)
+secaoNPC.BackgroundTransparency = 0.2
+secaoNPC.BorderSizePixel = 0
+secaoNPC.Parent = content
+
+local secaoNPCCorner = Instance.new("UICorner")
+secaoNPCCorner.CornerRadius = UDim.new(0, 7)
+secaoNPCCorner.Parent = secaoNPC
+
+local tituloNPC = Instance.new("TextLabel")
+tituloNPC.Size = UDim2.new(1, 0, 0, 15)
+tituloNPC.BackgroundTransparency = 1
+tituloNPC.Text = "🧟 NPC KILL (MOBS)"
+tituloNPC.TextColor3 = Color3.fromRGB(100, 255, 100)
+tituloNPC.TextSize = 10
+tituloNPC.Font = Enum.Font.GothamBold
+tituloNPC.TextXAlignment = Enum.TextXAlignment.Left
+tituloNPC.Parent = secaoNPC
+
+local btnKillNPC = Instance.new("TextButton")
+btnKillNPC.Size = UDim2.new(0, 110, 0, 24)
+btnKillNPC.Position = UDim2.new(0, 0, 0, 18)
+btnKillNPC.BackgroundColor3 = Color3.fromRGB(100, 200, 100)
+btnKillNPC.BackgroundTransparency = 0.15
+btnKillNPC.Text = "🧟 ATIVAR NPC"
+btnKillNPC.TextColor3 = Color3.fromRGB(255, 255, 255)
+btnKillNPC.TextSize = 9
+btnKillNPC.Font = Enum.Font.GothamBold
+btnKillNPC.BorderSizePixel = 0
+btnKillNPC.Parent = secaoNPC
+
+local statusKillNPC = Instance.new("TextLabel")
+statusKillNPC.Size = UDim2.new(0, 70, 0, 14)
+statusKillNPC.Position = UDim2.new(0, 120, 0, 23)
+statusKillNPC.BackgroundTransparency = 1
+statusKillNPC.Text = "🔴 OFF"
+statusKillNPC.TextColor3 = Color3.fromRGB(255, 100, 100)
+statusKillNPC.TextSize = 9
+statusKillNPC.Font = Enum.Font.Gotham
+statusKillNPC.TextXAlignment = Enum.TextXAlignment.Left
+statusKillNPC.Parent = secaoNPC
+
+local killsNPCLabel = Instance.new("TextLabel")
+killsNPCLabel.Size = UDim2.new(1, 0, 0, 14)
+killsNPCLabel.Position = UDim2.new(0, 0, 0, 46)
+killsNPCLabel.BackgroundTransparency = 1
+killsNPCLabel.Text = "🧟 Kills NPC: 0"
+killsNPCLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
+killsNPCLabel.TextSize = 9
+killsNPCLabel.Font = Enum.Font.GothamBold
+killsNPCLabel.TextXAlignment = Enum.TextXAlignment.Center
+killsNPCLabel.Parent = secaoNPC
+
+-- ============================================
+-- SEÇÃO: HITBOX
+-- ============================================
+
+local secaoHitbox = Instance.new("Frame")
+secaoHitbox.Size = UDim2.new(1, 0, 0, 85)
+secaoHitbox.Position = UDim2.new(0, 0, 0, 710)
+secaoHitbox.BackgroundColor3 = Color3.fromRGB(60, 30, 30)
+secaoHitbox.BackgroundTransparency = 0.2
+secaoHitbox.BorderSizePixel = 0
+secaoHitbox.Parent = content
+
+local secaoHitboxCorner = Instance.new("UICorner")
+secaoHitboxCorner.CornerRadius = UDim.new(0, 7)
+secaoHitboxCorner.Parent = secaoHitbox
+
+local tituloHitbox = Instance.new("TextLabel")
+tituloHitbox.Size = UDim2.new(1, 0, 0, 15)
+tituloHitbox.BackgroundTransparency = 1
+tituloHitbox.Text = "🎯 HITBOX EXPANDIDO"
+tituloHitbox.TextColor3 = Color3.fromRGB(255, 100, 100)
+tituloHitbox.TextSize = 10
+tituloHitbox.Font = Enum.Font.GothamBold
+tituloHitbox.TextXAlignment = Enum.TextXAlignment.Left
+tituloHitbox.Parent = secaoHitbox
+
+local btnHitbox = Instance.new("TextButton")
+btnHitbox.Size = UDim2.new(0, 110, 0, 24)
+btnHitbox.Position = UDim2.new(0, 0, 0, 18)
+btnHitbox.BackgroundColor3 = Color3.fromRGB(100, 100, 100)
+btnHitbox.BackgroundTransparency = 0.15
+btnHitbox.Text = "🎯 ATIVAR HITBOX"
+btnHitbox.TextColor3 = Color3.fromRGB(255, 255, 255)
+btnHitbox.TextSize = 9
+btnHitbox.Font = Enum.Font.GothamBold
+btnHitbox.BorderSizePixel = 0
+btnHitbox.Parent = secaoHitbox
+
+local statusHitbox = Instance.new("TextLabel")
+statusHitbox.Size = UDim2.new(0, 70, 0, 14)
+statusHitbox.Position = UDim2.new(0, 120, 0, 23)
+statusHitbox.BackgroundTransparency = 1
+statusHitbox.Text = "🔴 OFF"
+statusHitbox.TextColor3 = Color3.fromRGB(255, 100, 100)
+statusHitbox.TextSize = 9
+statusHitbox.Font = Enum.Font.Gotham
+statusHitbox.TextXAlignment = Enum.TextXAlignment.Left
+statusHitbox.Parent = secaoHitbox
+
+local btnResetHitbox = Instance.new("TextButton")
+btnResetHitbox.Size = UDim2.new(0, 50, 0, 18)
+btnResetHitbox.Position = UDim2.new(0, 120, 0, 42)
+btnResetHitbox.BackgroundColor3 = Color3.fromRGB(100, 100, 100)
+btnResetHitbox.BackgroundTransparency = 0.2
+btnResetHitbox.Text = "🔄 RESET"
+btnResetHitbox.TextColor3 = Color3.fromRGB(255, 255, 255)
+btnResetHitbox.TextSize = 8
+btnResetHitbox.Font = Enum.Font.GothamBold
+btnResetHitbox.BorderSizePixel = 0
+btnResetHitbox.Parent = secaoHitbox
+
+local hitboxRaioLabel = Instance.new("TextLabel")
+hitboxRaioLabel.Size = UDim2.new(0.35, 0, 1, 0)
+hitboxRaioLabel.Position = UDim2.new(0, 0, 0, 46)
+hitboxRaioLabel.BackgroundTransparency = 1
+hitboxRaioLabel.Text = "📏 Raio: " .. hitboxRaio
+hitboxRaioLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+hitboxRaioLabel.TextSize = 8
+hitboxRaioLabel.Font = Enum.Font.Gotham
+hitboxRaioLabel.TextXAlignment = Enum.TextXAlignment.Left
+hitboxRaioLabel.Parent = secaoHitbox
+
+local hitboxRaioMenos = Instance.new("TextButton")
+hitboxRaioMenos.Size = UDim2.new(0, 16, 0, 12)
+hitboxRaioMenos.Position = UDim2.new(1, -52, 0.5, -6)
+hitboxRaioMenos.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+hitboxRaioMenos.BackgroundTransparency = 0.2
+hitboxRaioMenos.Text = "−"
+hitboxRaioMenos.TextColor3 = Color3.fromRGB(255, 255, 255)
+hitboxRaioMenos.TextSize = 8
+hitboxRaioMenos.Font = Enum.Font.GothamBold
+hitboxRaioMenos.BorderSizePixel = 0
+hitboxRaioMenos.Parent = secaoHitbox
+
+local hitboxRaioValor = Instance.new("TextLabel")
+hitboxRaioValor.Size = UDim2.new(0, 20, 0, 12)
+hitboxRaioValor.Position = UDim2.new(1, -36, 0, 0)
+hitboxRaioValor.BackgroundTransparency = 1
+hitboxRaioValor.Text = hitboxRaio
+hitboxRaioValor.TextColor3 = Color3.fromRGB(255, 255, 255)
+hitboxRaioValor.TextSize = 8
+hitboxRaioValor.Font = Enum.Font.GothamBold
+hitboxRaioValor.TextXAlignment = Enum.TextXAlignment.Center
+hitboxRaioValor.Parent = secaoHitbox
+
+local hitboxRaioMais = Instance.new("TextButton")
+hitboxRaioMais.Size = UDim2.new(0, 16, 0, 12)
+hitboxRaioMais.Position = UDim2.new(1, -16, 0.5, -6)
+hitboxRaioMais.BackgroundColor3 = Color3.fromRGB(0, 200, 100)
+hitboxRaioMais.BackgroundTransparency = 0.2
+hitboxRaioMais.Text = "+"
+hitboxRaioMais.TextColor3 = Color3.fromRGB(255, 255, 255)
+hitboxRaioMais.TextSize = 8
+hitboxRaioMais.Font = Enum.Font.GothamBold
+hitboxRaioMais.BorderSizePixel = 0
+hitboxRaioMais.Parent = secaoHitbox
+
+-- ============================================
+-- SEÇÃO: SOULS
+-- ============================================
+
+local secaoSouls = Instance.new("Frame")
+secaoSouls.Size = UDim2.new(1, 0, 0, 55)
+secaoSouls.Position = UDim2.new(0, 0, 0, 800)
+secaoSouls.BackgroundColor3 = Color3.fromRGB(25, 25, 50)
+secaoSouls.BackgroundTransparency = 0.3
+secaoSouls.BorderSizePixel = 0
+secaoSouls.Parent = content
+
+local secaoSoulsCorner = Instance.new("UICorner")
+secaoSoulsCorner.CornerRadius = UDim.new(0, 7)
+secaoSoulsCorner.Parent = secaoSouls
+
+local tituloSouls = Instance.new("TextLabel")
+tituloSouls.Size = UDim2.new(1, 0, 0, 15)
+tituloSouls.BackgroundTransparency = 1
+tituloSouls.Text = "👻 SOULS"
+tituloSouls.TextColor3 = Color3.fromRGB(200, 200, 255)
+tituloSouls.TextSize = 10
+tituloSouls.Font = Enum.Font.GothamBold
+tituloSouls.TextXAlignment = Enum.TextXAlignment.Left
+tituloSouls.Parent = secaoSouls
+
+local btnSouls = Instance.new("TextButton")
+btnSouls.Size = UDim2.new(0, 110, 0, 24)
+btnSouls.Position = UDim2.new(0, 0, 0, 18)
+btnSouls.BackgroundColor3 = Color3.fromRGB(200, 200, 255)
+btnSouls.BackgroundTransparency = 0.15
+btnSouls.Text = "👻 ATIVAR SOULS"
+btnSouls.TextColor3 = Color3.fromRGB(255, 255, 255)
+btnSouls.TextSize = 9
+btnSouls.Font = Enum.Font.GothamBold
+btnSouls.BorderSizePixel = 0
+btnSouls.Parent = secaoSouls
+
+local statusSouls = Instance.new("TextLabel")
+statusSouls.Size = UDim2.new(0, 70, 0, 14)
+statusSouls.Position = UDim2.new(0, 120, 0, 23)
+statusSouls.BackgroundTransparency = 1
+statusSouls.Text = "🔴 OFF"
+statusSouls.TextColor3 = Color3.fromRGB(255, 100, 100)
+statusSouls.TextSize = 9
+statusSouls.Font = Enum.Font.Gotham
+statusSouls.TextXAlignment = Enum.TextXAlignment.Left
+statusSouls.Parent = secaoSouls
+
+local contSouls = Instance.new("TextLabel")
+contSouls.Size = UDim2.new(0.33, 0, 0, 16)
+contSouls.Position = UDim2.new(0.66, 0, 0, 800)
+contSouls.BackgroundTransparency = 1
+contSouls.Text = "👻 0"
+contSouls.TextColor3 = Color3.fromRGB(200, 200, 255)
+contSouls.TextSize = 11
+contSouls.Font = Enum.Font.Gotham
+contSouls.TextXAlignment = Enum.TextXAlignment.Right
+contSouls.Parent = content
+
+local orbesDetect = Instance.new("TextLabel")
+orbesDetect.Size = UDim2.new(1, 0, 0, 14)
+orbesDetect.Position = UDim2.new(0, 0, 0, 820)
+orbesDetect.BackgroundTransparency = 1
+orbesDetect.Text = "🔍 Souls: 0"
+orbesDetect.TextColor3 = Color3.fromRGB(200, 200, 200)
+orbesDetect.TextSize = 9
+orbesDetect.Font = Enum.Font.Gotham
+orbesDetect.TextXAlignment = Enum.TextXAlignment.Center
+orbesDetect.Parent = content
+
+local contador = Instance.new("TextLabel")
+contador.Size = UDim2.new(0.66, 0, 0, 16)
+contador.Position = UDim2.new(0, 0, 0, 800)
+contador.BackgroundTransparency = 1
+contador.Text = "💎0 ⚔️0"
+contador.TextColor3 = Color3.fromRGB(200, 200, 200)
+contador.TextSize = 11
+contador.Font = Enum.Font.Gotham
+contador.TextXAlignment = Enum.TextXAlignment.Left
+contador.Parent = content
+
+local performance = Instance.new("TextLabel")
+performance.Size = UDim2.new(1, 0, 0, 14)
+performance.Position = UDim2.new(0, 0, 0, 836)
+performance.BackgroundTransparency = 1
+performance.Text = "⚡ Performance: Normal"
+performance.TextColor3 = Color3.fromRGB(0, 255, 100)
+performance.TextSize = 8
+performance.Font = Enum.Font.Gotham
+performance.TextXAlignment = Enum.TextXAlignment.Center
+performance.Parent = content
+
+-- ============================================
+-- EVENTOS DOS BOTÕES
+-- ============================================
+
+btnColeta.MouseButton1Click:Connect(alternarColeta)
+btnSouls.MouseButton1Click:Connect(alternarSouls)
+btnKill.MouseButton1Click:Connect(alternarKill)
+btnKillLava.MouseButton1Click:Connect(alternarKillLava)
+btnKillBoss.MouseButton1Click:Connect(alternarKillBoss)
+btnKillNPC.MouseButton1Click:Connect(alternarKillNPC)
+
+btnAntiAFK.MouseButton1Click:Connect(function()
+    print("🖱️ Botão Anti-AFK clicado!")
+    alternarAntiAFK()
+end)
+
+btnFly.MouseButton1Click:Connect(function()
+    if flyAtivo then
+        pararFly()
+        btnFly.Text = "🕊️ FLY: OFF"
+        btnFly.BackgroundColor3 = Color3.fromRGB(100, 100, 100)
+        statusFly.Text = "🔴 Inativo"
+        statusFly.TextColor3 = Color3.fromRGB(255, 100, 100)
+    else
+        iniciarFly()
+        btnFly.Text = "🕊️ FLY: ON"
+        btnFly.BackgroundColor3 = Color3.fromRGB(0, 200, 100)
+        statusFly.Text = "🟢 Ativo"
+        statusFly.TextColor3 = Color3.fromRGB(0, 255, 100)
+    end
+end)
+
+btnFlyMais.MouseButton1Click:Connect(aumentarFlySpeed)
+btnFlyMenos.MouseButton1Click:Connect(diminuirFlySpeed)
+btnFlyReset.MouseButton1Click:Connect(resetarFlySpeed)
+
+btnVelocidadeMais.MouseButton1Click:Connect(aumentarVelocidade)
+btnVelocidadeMenos.MouseButton1Click:Connect(diminuirVelocidade)
+btnResetVelocidade.MouseButton1Click:Connect(resetarVelocidade)
+
+btnModo.MouseButton1Click:Connect(function()
+    modoAgressivo = not modoAgressivo
+    if modoAgressivo then
+        btnModo.Text = "🎯 MODO: AGRESSIVO"
+        btnModo.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+    else
+        btnModo.Text = "🎯 MODO: NORMAL"
+        btnModo.BackgroundColor3 = Color3.fromRGB(100, 100, 100)
+    end
+end)
+
+btnOtimizar.MouseButton1Click:Connect(function()
+    otimizarGraficos()
+    if otimizacaoAtiva then
+        btnOtimizar.Text = "🔄 RESTAURAR"
+        btnOtimizar.BackgroundColor3 = Color3.fromRGB(0, 200, 100)
+        statusOtimizacao.Text = "🟡 Gráficos Otimizados"
+        statusOtimizacao.TextColor3 = Color3.fromRGB(255, 200, 0)
+    else
+        btnOtimizar.Text = "🎨 OTIMIZAR"
+        btnOtimizar.BackgroundColor3 = Color3.fromRGB(255, 165, 0)
+        statusOtimizacao.Text = "🟢 Gráficos Normais"
+        statusOtimizacao.TextColor3 = Color3.fromRGB(0, 255, 100)
+    end
+end)
+
+btnExtremo.MouseButton1Click:Connect(function()
+    otimizarExtremo()
+    statusOtimizacao.Text = "🔥 Modo Extremo!"
+    statusOtimizacao.TextColor3 = Color3.fromRGB(255, 50, 0)
+    btnOtimizar.Text = "🔄 RESTAURAR"
+    btnOtimizar.BackgroundColor3 = Color3.fromRGB(0, 200, 100)
+    otimizacaoAtiva = true
+end)
+
+btnHitbox.MouseButton1Click:Connect(alternarHitbox)
+btnResetHitbox.MouseButton1Click:Connect(resetarHitbox)
+
+hitboxRaioMais.MouseButton1Click:Connect(aumentarHitboxRaio)
+hitboxRaioMenos.MouseButton1Click:Connect(diminuirHitboxRaio)
+
+-- RAIO
+raioMais.MouseButton1Click:Connect(function()
+    if raio < 300 then
+        raio = raio + 10
+        raioLab.Text = "📏 " .. raio
+        raioValor.Text = raio
+    end
+end)
+
+raioMenos.MouseButton1Click:Connect(function()
+    if raio > 30 then
+        raio = raio - 10
+        raioLab.Text = "📏 " .. raio
+        raioValor.Text = raio
+    end
+end)
+
+-- BOSS ALTURA
+local bossAlturaMais = Instance.new("TextButton")
+bossAlturaMais.Size = UDim2.new(0, 16, 0, 12)
+bossAlturaMais.Position = UDim2.new(1, -16, 0.5, -6)
+bossAlturaMais.BackgroundColor3 = Color3.fromRGB(0, 200, 100)
+bossAlturaMais.BackgroundTransparency = 0.2
+bossAlturaMais.Text = "+"
+bossAlturaMais.TextColor3 = Color3.fromRGB(255, 255, 255)
+bossAlturaMais.TextSize = 8
+bossAlturaMais.Font = Enum.Font.GothamBold
+bossAlturaMais.BorderSizePixel = 0
+bossAlturaMais.Parent = secaoBoss
+
+local bossAlturaMenos = Instance.new("TextButton")
+bossAlturaMenos.Size = UDim2.new(0, 16, 0, 12)
+bossAlturaMenos.Position = UDim2.new(1, -52, 0.5, -6)
+bossAlturaMenos.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+bossAlturaMenos.BackgroundTransparency = 0.2
+bossAlturaMenos.Text = "−"
+bossAlturaMenos.TextColor3 = Color3.fromRGB(255, 255, 255)
+bossAlturaMenos.TextSize = 8
+bossAlturaMenos.Font = Enum.Font.GothamBold
+bossAlturaMenos.BorderSizePixel = 0
+bossAlturaMenos.Parent = secaoBoss
+
+bossAlturaMais.MouseButton1Click:Connect(function()
+    if bossAltura < 50 then
+        bossAltura = bossAltura + 2
+        bossAlturaLab.Text = "📏 Altura: " .. bossAltura
+        bossAlturaValor.Text = bossAltura
+    end
+end)
+
+bossAlturaMenos.MouseButton1Click:Connect(function()
+    if bossAltura > 5 then
+        bossAltura = bossAltura - 2
+        bossAlturaLab.Text = "📏 Altura: " .. bossAltura
+        bossAlturaValor.Text = bossAltura
+    end
+end)
+
+-- MINIMIZAR
+minBtn.MouseButton1Click:Connect(function()
+    minimizado = not minimizado
+    if minimizado then
+        frame.Size = UDim2.new(0, 300, 0, 35)
+        scrollFrame.Visible = false
+        minBtn.Text = "□"
+        minBtn.BackgroundColor3 = Color3.fromRGB(0, 200, 100)
+    else
+        frame.Size = UDim2.new(0, 300, 0, 620)
+        scrollFrame.Visible = true
+        minBtn.Text = "─"
+        minBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 120)
+    end
+end)
+
+-- FECHAR
+closeBtn.MouseButton1Click:Connect(function()
+    coletando = false
+    matando = false
+    matandoLava = false
+    matandoBoss = false
+    matandoNPC = false
+    coletandoSouls = false
+    antiAFKAtivo = false
+    pararFly()
+    if hitboxExpandido then desativarHitbox() end
+    if loopColeta then loopColeta:Disconnect() end
+    if loopSouls then loopSouls:Disconnect() end
+    if loopKill then loopKill:Disconnect() end
+    if loopKillLava then loopKillLava:Disconnect() end
+    if loopKillBoss then loopKillBoss:Disconnect() end
+    if loopKillNPC then loopKillNPC:Disconnect() end
+    if loopAntiAFK then loopAntiAFK:Disconnect() end
+    if loopVelocidade then loopVelocidade:Disconnect() end
+    if otimizacaoAtiva then otimizarGraficos() end
+    gui:Destroy()
+    print("✅ MCRM HUB v2.2 finalizado!")
+end)
+
+-- ============================================
+-- RESPAWN
+-- ============================================
+
+player.CharacterAdded:Connect(function(novoChar)
+    character = novoChar
+    rootPart = character:WaitForChild("HumanoidRootPart")
+    humanoid = character:WaitForChild("Humanoid")
+    wait(2)
+    acharEspada()
+    acharEspadaLava()
+
+    if velocidadeAtual > 16 then
+        definirVelocidade(velocidadeAtual)
+    end
+
+    if flyAtivo then
+        pararFly()
+        btnFly.Text = "🕊️ FLY: OFF"
+        btnFly.BackgroundColor3 = Color3.fromRGB(100, 100, 100)
+        statusFly.Text = "🔴 Inativo"
+        statusFly.TextColor3 = Color3.fromRGB(255, 100, 100)
+    end
+
+    if hitboxExpandido then
+        desativarHitbox()
+        btnHitbox.Text = "🎯 ATIVAR HITBOX"
+        btnHitbox.BackgroundColor3 = Color3.fromRGB(100, 100, 100)
+        statusHitbox.Text = "🔴 OFF"
+        statusHitbox.TextColor3 = Color3.fromRGB(255, 100, 100)
+    end
+
+    if antiAFKAtivo then
+        if loopAntiAFK then loopAntiAFK:Disconnect() end
+        loopAntiAFK = RunService.Heartbeat:Connect(function()
+            if tick() - ultimoMovimento > math.random(45, 90) then
+                antiAFKFunc()
+                ultimoMovimento = tick()
+            end
+        end)
+    end
+
+    if matando then
+        matando = false
+        btnKill.Text = "⚔️ ATIVAR"
+        btnKill.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+        statusKill.Text = "🔄 Reviveu!"
+        statusKill.TextColor3 = Color3.fromRGB(255, 200, 0)
+        if loopKill then
+            loopKill:Disconnect()
+            loopKill = nil
+        end
+    end
+
+    if matandoLava then
+        matandoLava = false
+        btnKillLava.Text = "🌋 ATIVAR LAVA"
+        btnKillLava.BackgroundColor3 = Color3.fromRGB(255, 100, 0)
+        statusKillLava.Text = "🔄 Reviveu!"
+        statusKillLava.TextColor3 = Color3.fromRGB(255, 200, 0)
+        if loopKillLava then
+            loopKillLava:Disconnect()
+            loopKillLava = nil
+        end
+    end
+
+    if matandoBoss then
+        matandoBoss = false
+        btnKillBoss.Text = "👑 ATIVAR BOSS"
+        btnKillBoss.BackgroundColor3 = Color3.fromRGB(255, 215, 0)
+        statusKillBoss.Text = "🔄 Reviveu!"
+        statusKillBoss.TextColor3 = Color3.fromRGB(255, 200, 0)
+        bossStatusLabel.Text = "🎯 Reviveu"
+        bossStatusLabel.TextColor3 = Color3.fromRGB(0, 255, 100)
+        if loopKillBoss then
+            loopKillBoss:Disconnect()
+            loopKillBoss = nil
+        end
+    end
+
+    if matandoNPC then
+        matandoNPC = false
+        btnKillNPC.Text = "🧟 ATIVAR NPC"
+        btnKillNPC.BackgroundColor3 = Color3.fromRGB(100, 200, 100)
+        statusKillNPC.Text = "🔄 Reviveu!"
+        statusKillNPC.TextColor3 = Color3.fromRGB(255, 200, 0)
+        if loopKillNPC then
+            loopKillNPC:Disconnect()
+            loopKillNPC = nil
+        end
+    end
+end)
+
+-- ============================================
+-- LOOP DE PERFORMANCE
+-- ============================================
+
+local ultimoFPS = tick()
+local frames = 0
+
+RunService.Heartbeat:Connect(function()
+    frames = frames + 1
+    if tick() - ultimoFPS >= 1 then
+        local fps = frames
+        frames = 0
+        ultimoFPS = tick()
+
+        if fps > 50 then
+            performance.Text = "⚡ Performance: Excelente ("..fps.." FPS)"
+            performance.TextColor3 = Color3.fromRGB(0, 255, 100)
+        elseif fps > 30 then
+            performance.Text = "⚡ Performance: Boa ("..fps.." FPS)"
+            performance.TextColor3 = Color3.fromRGB(255, 200, 0)
+        else
+            performance.Text = "⚡ Performance: Baixa ("..fps.." FPS)"
+            performance.TextColor3 = Color3.fromRGB(255, 100, 100)
+        end
+    end
+
+    if vivo() then
+        statusVivo.Text = "❤️"
+        statusVivo.TextColor3 = Color3.fromRGB(0, 255, 100)
+        if not coletandoSouls then
+            local total = contarSouls()
+            if total > 0 then
+                orbesDetect.Text = "🟢 Souls: "..total
+                orbesDetect.TextColor3 = Color3.fromRGB(0, 255, 100)
+            else
+                orbesDetect.Text = "🔴 Souls: 0"
+                orbesDetect.TextColor3 = Color3.fromRGB(255, 100, 100)
+            end
+        end
+    else
+        statusVivo.Text = "💀"
+        statusVivo.TextColor3 = Color3.fromRGB(255, 50, 50)
+    end
+
+    if matandoLava and vivo() then
+        local agora = tick()
+        local vulcaoStatus = (cargaVulcao >= cargaMaxima and agora - ultimoUsoVulcao > tempoCooldownVulcao) and "✅ PRONTO" or "⏳ " .. cargaVulcao .. "/" .. cargaMaxima
+        local explosaoStatus = (agora - ultimoUsoExplosao > tempoCooldownExplosao) and "✅ PRONTO" or "⏳ " .. math.floor(tempoCooldownExplosao - (agora - ultimoUsoExplosao)) .. "s"
+        local formaStatus = (agora - ultimoUsoForma > tempoCooldownForma) and "✅ PRONTO" or "⏳ " .. math.floor(tempoCooldownForma - (agora - ultimoUsoForma)) .. "s"
+        habilidadesLabel.Text = "💥 Explosão: " .. explosaoStatus .. "  |  🔥 Forma: " .. formaStatus
+    end
+end)
+
+print("✅ MCRM HUB v2.2 COMPLETO CARREGADO!")
+print("🕊️ FLY: WASD + Espaço/Shift")
+print("🛡️ ANTI-AFK FUNCIONANDO!")
+print("🏃 VELOCIDADE PERSISTENTE!")
+print("🌋 LAVA KILL (1, 2, 3, Q)")
+print("👑 BOSS KILL (Em cima)")
+print("🧟 NPC KILL (Mobs)")
+print("🎯 HITBOX EXPANDIDO + AURA")
+print("👻 SOULS COLETA")
+print("💎 AZUL = Coleta")
+print("⚔️ VERMELHO = Kill Normal")
+print("🌋 LARANJA = Kill Lava")
+print("👑 DOURADO = Boss Kill")
+print("🧟 VERDE = NPC Kill")
+print("🎯 MODO AGRESSIVO")
+print("📏 RAIO + / -")
+print("📌 Versão: 2.2 Final")
